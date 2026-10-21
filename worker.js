@@ -38,9 +38,12 @@ const WEBSITE_CHAT_MODELS = {
   "qwen3.8-flash": ["6217", "Qwen3.8 Flash"], "agnes-2.5-flash": ["6237", "Agnes 2.5 Flash"],
   "perplexity": ["4372", "Perplexity (search)"],
 };
-const WEBSITE_ALIASES = { sonar: "perplexity", "deepresearch": "deep-research" };
+const WEBSITE_ALIASES = { sonar: "perplexity", "deepresearch": "deep-research", "chat-pdf": "chatpdf" };
 // Website workflow agents reached like chat models (through /dify-api); they can run for minutes.
-const WEBSITE_AGENTS = { "deep-research": { agentId: "4341", name: "Deep Research", prefix: "/dify-api" } };
+const WEBSITE_AGENTS = {
+  "deep-research": { agentId: "4341", name: "Deep Research", prefix: "/dify-api" },
+  "chatpdf": { agentId: "6081", name: "ChatPDF", prefix: "/dify-api", files: { required: true, max: 1, maxBytes: 15 * 1024 * 1024, pdfOnly: true } },
+};
 const UA = "glbgpt-mcp-worker/2.0 (cloudflare-workers)";
 const SERVER_INFO = { name: "glbgpt-mcp", version: "2.0.0" };
 const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
@@ -174,7 +177,7 @@ async function websiteChat(env, agentId, query, opts = {}) {
         device: { deviceType: "pc" },
         productNo: "glbgpt", // some agents refuse the call without it ("invalid product no null")
         inputs: { ...(opts.prefix === "/dify-api" ? {} : { thinking_patch: true }), enableImages: false, deep_research: false, study: false, enableDeepThink: false, ...(opts.inputs || {}) },
-        enableSearch: false, agentId, query, conversationId: "", parentMessageId: "", files: [], chatTaskId: crypto.randomUUID(),
+        enableSearch: false, agentId, query, conversationId: "", parentMessageId: "", files: opts.files || [], chatTaskId: crypto.randomUUID(),
       }),
     });
   } catch (e) {
@@ -681,9 +684,10 @@ async function loadMedia(src, maxBytes, what) {
 }
 
 // Upload one file to the website (multipart, field "files"); returns its file key.
-async function webUpload(env, path, blob, name) {
+async function webUpload(env, path, blob, name, fields = {}) {
   if (!env.GLBGPT_TOKEN) throw new ToolError("This model is only on GlobalGPT's website, which needs GLBGPT_TOKEN (your login token) on the Worker.");
   const form = new FormData();
+  for (const [k, v] of Object.entries(fields)) if (k !== "returnFile") form.append(k, String(v));
   form.append("files", new File([blob], name, { type: blob.type || "application/octet-stream" }));
   let res;
   try {
@@ -695,9 +699,9 @@ async function webUpload(env, path, blob, name) {
   try { data = JSON.parse(await res.text()); } catch {}
   const err = websiteError(res.status, data);
   if (err) throw new ToolError(err);
-  const key = data?.files?.[0]?.fileKey ?? data?.data?.files?.[0]?.fileKey;
-  if (!key) throw new ToolError("GlobalGPT's website didn't return a file key for the upload.");
-  return String(key);
+  const file = data?.files?.[0] ?? data?.data?.files?.[0];
+  if (!file?.fileKey) throw new ToolError("GlobalGPT's website didn't return a file key for the upload.");
+  return fields.returnFile ? file : String(file.fileKey);
 }
 
 const fileName = (src, fallback) => (/^https:/i.test(src || "") ? decodeURIComponent(String(src).split("?")[0].split("/").pop() || "") : "") || fallback;
@@ -762,6 +766,24 @@ async function runDetector(env, w, a, limit) {
     media_id: asset.id, details: rest,
     note: "Scores are 0-1 likelihoods. Use them as a risk assessment, not proof.",
   });
+}
+
+// A website chat model or agent with documents attached (ChatPDF needs exactly one PDF).
+async function websiteChatWithFiles(env, web, a, files) {
+  const rule = web.files || { max: 10, maxBytes: 40 * 1024 * 1024 };
+  if (files.length > rule.max) throw new ToolError(`${web.name} takes at most ${rule.max} file${rule.max > 1 ? "s" : ""}.`);
+  const attached = [];
+  for (const src of files) {
+    const blob = await loadMedia(src, rule.maxBytes, "file");
+    const name = fileName(src, rule.pdfOnly ? "document.pdf" : "document");
+    if (rule.pdfOnly && !(/\.pdf$/i.test(name) || /pdf/i.test(blob.type) || /^data:application\/pdf/i.test(src))) throw new ToolError(`${web.name} takes a PDF.`);
+    const f = await webUpload(env, "/ai-api/ai/agent/uploadFile", blob, name, { agentId: web.agentId, returnFile: true });
+    attached.push({ transferMethod: "local_file", uploadFileId: String(f.fileKey), url: f.url || "", fileName: name, type: "file", mimeType: blob.type || (rule.pdfOnly ? "application/pdf" : undefined) });
+  }
+  const query = [str(a.system), str(a.prompt)].filter(Boolean).join("\n\n");
+  const out = await websiteChat(env, web.agentId, query, { ...(web.prefix ? { prefix: web.prefix } : {}), files: attached.map((x) => defined(x)) });
+  if (!out.answer) throw new ToolError(`${web.name} returned an empty answer. Events received: ${JSON.stringify(out.debug)}`);
+  return defined({ model: web.id, answer: out.answer, via: "website", files: attached.map((x) => x.fileName), usage: out.usage });
 }
 
 // AI Translate: the website's translation agent (text in, text out; the answer streams back like a chat).
@@ -979,7 +1001,7 @@ const TOOLS = [
   {
     name: "glbgpt_chat",
     title: "GlobalGPT chat",
-    description: "Ask one of GlobalGPT's chat models a single question and get the answer. Optionally set a system prompt, choose a model, attach images for the model to see, or pass a JSON Schema (response_schema) to get JSON back. glbgpt_list_models with type chat lists the models and their prices; models marked source 'website' work too, but without images.",
+    description: "Ask one of GlobalGPT's chat models a single question and get the answer. Optionally set a system prompt, choose a model, attach images for the model to see, attach documents for website-only models (files; chatpdf answers questions about one PDF), or pass a JSON Schema (response_schema) to get JSON back. glbgpt_list_models with type chat lists the models and their prices; models marked source 'website' work too, but without images.",
     inputSchema: {
       type: "object",
       properties: {
@@ -987,6 +1009,7 @@ const TOOLS = [
         system: { type: "string", description: "Optional system prompt." },
         model: { type: "string", description: `Chat model id (default ${DEFAULT_CHAT_MODEL}).` },
         images: { type: "array", items: { type: "string" }, maxItems: 10, description: "Images for the model to see: public https URLs or data: URIs." },
+        files: { type: "array", items: { type: "string" }, maxItems: 10, description: "Documents (PDF, DOCX, TXT, ...) for website-only models, e.g. the PDF for chatpdf: public https URLs or data: URIs. They're uploaded to GlobalGPT first." },
         response_schema: { type: "object", description: "Optional JSON Schema; the answer is then JSON matching it." },
         reasoning_effort: { type: "string", enum: ["none", "low", "medium", "high"], description: "For reasoning models. Omit for the model's default." },
       },
@@ -1184,6 +1207,12 @@ const handlers = {
     if (!prompt) throw new ToolError("prompt is required.");
     const images = Array.isArray(a.images) ? a.images : [];
     if (images.some((r) => !isRef(r))) throw new ToolError("images must be public https URLs or data: URIs.");
+    const files = Array.isArray(a.files) ? a.files.filter(Boolean) : [];
+    if (files.length) {
+      const web = websiteModel(a.model);
+      if (!web) throw new ToolError("files work with GlobalGPT's website-only models (e.g. chatpdf). API chat models take images instead.");
+      return await websiteChatWithFiles(ctx.env, web, a, files);
+    }
     const schema = a.response_schema && typeof a.response_schema === "object" ? a.response_schema : null;
     const system = [
       str(a.system),
@@ -1212,6 +1241,7 @@ const handlers = {
       const web = isModelMissing(e) ? websiteModel(model) : null;
       if (!web) throw e;
       // Not in the API, but on the website: same question through the website's chat.
+      if (web.files?.required) throw new ToolError(`${web.name} needs the document in files (a public https URL or data: URI).`);
       if (images.length) throw new ToolError(`${web.name} is only on GlobalGPT's website, where this connector can't attach images. Ask without images, or pick an API model (glbgpt_list_models).`);
       const query = [system, prompt].filter(Boolean).join("\n\n");
       const out = await websiteChat(ctx.env, web.agentId, query, web.prefix ? { prefix: web.prefix } : {});

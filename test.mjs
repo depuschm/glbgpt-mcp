@@ -36,6 +36,7 @@ globalThis.fetch = async (url, init = {}) => {
     if (init.headers?.Authorization !== `Bearer ${TOKEN}`) return res(200, { code: 401, message: 'token invalid' });
     const wp = u.pathname;
     if (wp === '/ai-api/ai/task/get') { state.webPolls = (state.webPolls || 0) + 1; return res(200, state.webFail ? { code: 1, task: { status: 'failed', failedReason: 'nsfw', errorCode: 'X' } } : state.webPolls > (state.webPollsUntilDone || 0) ? { code: 1, task: { status: 'success', outputFileUrl: 'https://cdn.example/web.png', mediaType: state.webMediaType || 1, conversationId: 'c1', input: JSON.stringify({ prompt: 'a cat' }), output: state.webMjButtons ? JSON.stringify({ action: 'IMAGINE', buttons: [{ customId: 'MJ::U1', label: 'U1' }, { customId: 'MJ::U2', label: 'U2' }, { customId: 'MJ::reroll', label: '', emoji: '🔄' }] }) : undefined } } : { code: 1, task: { status: 'processing' } }); }
+    if (wp === '/ai-api/ai/agent/uploadFile') return res(200, { code: 1, files: [{ fileKey: 'pdf-key', url: 'https://static.futureshareai.com/f/doc.pdf' }] });
     if (wp === '/ai-api/ai/storage/upload' || wp === '/ai-api/ai/detector/frame/upload') { state.uploads = (state.uploads || 0) + 1; return res(200, { code: 1, files: [{ fileKey: wp.includes('frame') ? 'frame-key' : 'file-key' }] }); }
     if (wp === '/user-api/api/user/bill/list') return res(200, { code: 1, data: { list: [{ direction: 'decrease', model: 'ai-video-detector', display_name: 'AI Video Detector', cost: 0, original_cost: 20, source_type: 'chat_usage', created_at: '2026-10-21' }, { direction: 'increase', cost: 130, source_type: 'daily_checkin', category_name: 'Daily Check-in Reward', created_at: '2026-10-21' }] } });
     if (wp === '/ai-api/ai/assets/list') return res(200, { code: 1, data: { next_cursor: null, items: body.source_type === 'UPLOADS' ? [{ asset_id: 'up1', url: 'https://static.futureshareai.com/u/file-key.png', source_type: 'UPLOAD_FILE', media_type: 1 }] : [{ asset_id: 'a76', url: 'https://cdn.example/mine.png', source_type: 'CREATED', media_type: 1 }, { asset_id: 'a90', url: 'https://static.futureshareai.com/v/clip.mp4', source_type: 'CREATED', media_type: 2 }] } });
@@ -48,6 +49,7 @@ globalThis.fetch = async (url, init = {}) => {
     if (state.webPay) return res(200, { code: 402, message: 'pay', data: { subCode: 4002 } });
     return res(200, { code: 1, taskId: 'w1' });
   }
+  if (url.endsWith('.pdf') && url.startsWith('https://cdn.example/')) return new Response(new Uint8Array([37, 80, 68, 70]), { status: 200, headers: { 'Content-Type': 'application/pdf', 'Content-Length': '4' } });
   if (url.startsWith('https://cdn.example/') || url.startsWith('https://static.futureshareai.com/')) return new Response(new Uint8Array([137, 80, 78, 71]), { status: 200, headers: { 'Content-Type': 'image/png', 'Content-Length': '4' } });
   if (!url.startsWith(API)) return err(404, 'wrong_host');
   if (state.keyBad || init.headers?.Authorization !== `Bearer ${KEY}`) return err(401, 'invalid_api_key');
@@ -74,7 +76,7 @@ globalThis.fetch = async (url, init = {}) => {
     return res(200, { id: p.slice(7), status: 'processing' });
   }
   if (p === '/chat/completions') {
-    if (['claude-opus-5.5', 'perplexity', 'sonar', 'made-up-model', 'deep-research'].includes(body.model)) return err(404, 'model_not_found', `The model '${body.model}' does not exist or you do not have access to it.`);
+    if (['claude-opus-5.5', 'perplexity', 'sonar', 'made-up-model', 'deep-research', 'chatpdf'].includes(body.model)) return err(404, 'model_not_found', `The model '${body.model}' does not exist or you do not have access to it.`);
     if (body.response_format && state.chatJsonReject) return err(400, 'upstream_rejected', 'json mode not supported');
     const content = body.response_format || /JSON Schema/.test(body.messages[0]?.content ?? '') ? '```json\n{"a":1}\n```' : 'Hello';
     return res(200, { id: 'c1', model: body.model, choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 2 } });
@@ -485,6 +487,19 @@ const tr = calls.find((c) => c.path === '/dify-api/ai/agent/chatStream');
 check('ai translate: /dify-api, agent 6174, translate inputs, text back', !r.err && r.json.text === 'OK' && r.json.type === 'text' && tr.body.agentId === '6174' && tr.body.inputs.translate_type === 'text' && tr.body.inputs.target_language === 'English' && tr.body.query === 'Hallo Welt');
 r = await tool(envT(), 'glbgpt_list_models', { type: 'chat' });
 check('deep research listed with the website chat models', !r.err && r.json.models.some((m) => m.id === 'deep-research' && m.source === 'website'));
+
+// chatpdf: document upload, then the agent
+reset();
+r = await tool(envT(), 'glbgpt_chat', { model: 'chatpdf', prompt: 'Summarise it', files: ['https://cdn.example/doc.pdf'] });
+const up = calls.find((c) => c.path === '/ai-api/ai/agent/uploadFile');
+const cp = calls.find((c) => c.path === '/dify-api/ai/agent/chatStream');
+check('chatpdf: PDF uploaded for agent 6081, sent as a local_file', !r.err && r.json.answer === 'OK' && up && cp.body.agentId === '6081' && cp.body.files[0].uploadFileId === 'pdf-key' && cp.body.files[0].transferMethod === 'local_file' && cp.body.files[0].type === 'file' && !calls.some((c) => c.path === '/chat/completions'));
+r = await tool(envT(), 'glbgpt_chat', { model: 'chatpdf', prompt: 'Summarise it' });
+check('chatpdf without a file -> asks for it', r.err && r.text.includes('files'));
+r = await tool(envT(), 'glbgpt_chat', { model: 'chatpdf', prompt: 'x', files: ['https://cdn.example/pic.png'] });
+check('chatpdf refuses a non-PDF', r.err && r.text.includes('PDF'));
+r = await tool(envT(), 'glbgpt_chat', { model: 'made-up-model', prompt: 'x', files: ['https://cdn.example/doc.pdf'] });
+check('files with an API model -> explains', r.err && r.text.includes('website-only'));
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);
