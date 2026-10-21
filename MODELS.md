@@ -7,7 +7,7 @@ Snapshot of what this connector can use, checked on **21 October 2026**. GlobalG
 - **Website media**: images, videos, tools, 3D and speech to text only on glbgpt.com, also through `GLBGPT_TOKEN`.
 - **Not supported**: on glbgpt.com, but not reachable through this connector (yet).
 
-Totals: **103 through the API** (42 chat, 29 image, 21 video, 11 audio), **18 more chat models through the website**, and **37 website-only media models and tools** (tested live on 21 October 2026, see below).
+Totals: **103 through the API** (42 chat, 29 image, 21 video, 11 audio), **18 more chat models through the website**, and **39 website-only media models and tools** (tested live on 21 October 2026, see below).
 
 ## Chat
 
@@ -191,35 +191,34 @@ The connector sends the same fields the website's own form sends (checked agains
 
 **Status: tested live on 21 October 2026** with one generation each at the cheapest settings. Prices are the website's list prices and price tables, checked against the account's real charges on 21 October 2026 (`glbgpt_usage` now shows those charges under `credit_records`). Talking Photo bills the length of the spoken audio, so its estimate can be low.
 
-| Kind | Model | ID | From (credits) | Live test |
-|---|---|---|---|---|
-| Image | Ideogram 4.5 | `ideogram-4.5` | 27 (very low) to 730 | ✅ works (`metadata.quality` low, 100) |
-| Image | Ideogram 3.0 / Turbo / Quality | `ideogram-3.0` / `ideogram-3.0-turbo` / `ideogram-3.0-quality` | 200 / 100 / 300 | ✅ all three work |
-| Image | Midjourney | `midjourney` | 150 charged (website lists 100) | ✅ works (returns the 2x2 grid) |
-| Image | MAI Image 2.6 / 2.6 Flash | `mai-image-2.6` / `mai-image-2.6-flash` | 104 / 52 | ✅ both work |
-| Image | Krea 3 | `krea-3` | 25 (0.5K) | ✅ works (0.5K) |
-| Image | Qwen Image 3.0 / 3.0 Pro | `qwen-image-3.0` / `qwen-image-3.0-pro` | 100 / 133 | ✅ both work |
-| Image | FLUX.3 Klein | `flux-3-klein` | 21 (768sq) | ✅ works (768sq) |
-| Image | HiDream O1 / O1 Dev / E1 Full / I1 Full / I1 Dev | `hidream-o1` / `hidream-o1-dev` / `hidream-e1-full` / `hidream-i1-full` / `hidream-i1-dev` | 133 / 67 / 80 / 80 / 40 | ✅ all five work (E1 Full edits one image) |
-| Image tool | AI Poster | `ai-poster` | 400 | ✅ works, including text on the poster (retested after the fix: `metadata.textBlocks` as strings or `{text, position}`) |
-| Image tool | AI Product Images | `ai-product-images` | 400 | ✅ works |
-| Video | Veo 3 | `veo3` | 1,500 | ✅ works (fixed 5 s) |
-| Video | Kling O1 | `kling-o1` | about 200 per second | ✅ works; new videos are 5 or 10 s (the connector now says so before submitting) |
-| Video | Wan 3.0 Prime | `wan3.0-video-prime` | about 160 per second | ✅ works (2 s, 480P) |
-| Video | Wan 2.7 | `wan-2.7` | about 200 per second | ✅ works (2 s) |
-| Video | Wan 2.6 | `wan-2.6` | about 200 per second | ✅ works, `16:9` / `9:16` included (retested after the fix; turned into the pixel size the website expects) |
-| Video | Seedance 1.0 Pro | `seedance-1.0-pro` | 2,000 (5 s) | ⏳ submitted fine (5 s), but stuck in GlobalGPT's own queue ("High demand right now") for 8+ hours; the website shows it as "In queue" too, so the connector reports it correctly |
-| Video | HeyGen avatar video | `heygen-video` | quoted per video (about 1,000 per minute) | ❌ "Insufficient credit. This operation requires 'api' credits." (voices list works; same on retest) |
-| Video tool | Video Upscale | `video-upscale` | 35 / 125 / 498 per second (720p / 1080p / 4K) | ✅ works (720p) |
-| Video tool | Video Sound | `video-sound` | 1.5 per second | ✅ works |
-| Video tool | Video Reframe | `video-reframe` | 200 per second | ✅ works (9:16) |
-| Video tool | Talking Photo | `talking-photo` | 83 / 150 per second of speech | ✅ works (720p) |
-| Video tool | Video Translator | `video-translate` | 222 per second | ✅ works on a clip with speech (Spanish, retested 21 Oct evening); the first test on a clip without speech failed |
-| 3D | Hunyuan 3D 3.1 / Tripo h3.1 / Meshy 7 / TRELLIS 3D / Rodin Gen-2 | `hunyuan-3d-3.1` / `tripo-h3.1` / `meshy-7` / `trellis-3d` / `rodin-gen-2` | 100 / 330 untextured, 660 textured (default) / 1,760 preview, 2,640 full (default) / 500 / 1,400 | ✅ all five work (GLB) |
-| Speech to text | Scribe v2 | `scribe-v2` | 12 per minute | ✅ works (returns a .txt transcript) |
-| Speech to text | Scribe v1 | `scribe-v1` | 12 per minute | ✅ works (returns a .txt transcript) |
-| Detector | AI Image Detector | `ai-image-detector` | 20 | ✅ works (image URL or data: URI; added to the media library if needed; scores come back directly) |
-| Detector | AI Video Detector | `ai-video-detector` | 20 (0 during a current discount) | ✅ works (checks one frame, cut automatically for videos on GlobalGPT; `metadata.frame_ms`) |
+| Kind | Model | ID | Price (credits) | Charged in the 21 Oct test | Live test |
+|---|---|---|---|---|---|
+| Image | Ideogram 4.5 | `ideogram-4.5` | 27 (very low) / 100 (low) / 200 (medium) / 330 (high) / 730 (high, editing) | 100 (low) | ✅ works |
+| Image | Ideogram 3.0 / Turbo / Quality | `ideogram-3.0` / `ideogram-3.0-turbo` / `ideogram-3.0-quality` | 200 / 100 / 300 | 200 / 100 / 300 | ✅ all three work |
+| Image | Midjourney | `midjourney` | 150 (the website lists 100) | 150 | ✅ works (returns the 2x2 grid) |
+| Image | MAI Image 2.6 / 2.6 Flash | `mai-image-2.6` / `mai-image-2.6-flash` | 104 / 52 at 1K (233 / 117 at 2K) | 104 / 52 | ✅ both work |
+| Image | Krea 3 | `krea-3` | 25 (0.5K) / 100 (1K) / 400 (2K) | 25 | ✅ works |
+| Image | Qwen Image 3.0 / 3.0 Pro | `qwen-image-3.0` / `qwen-image-3.0-pro` | 100 / 133 (250 at 2K), +10 per input image | 100 / 133 | ✅ both work |
+| Image | FLUX.3 Klein | `flux-3-klein` | 21 (768sq) / 24 / 29 / 37 / 96 (4K) | 21 | ✅ works |
+| Image | HiDream O1 / O1 Dev / E1 Full / I1 Full / I1 Dev | `hidream-o1` / `hidream-o1-dev` / `hidream-e1-full` / `hidream-i1-full` / `hidream-i1-dev` | 133 / 67 / 80 / 80 / 40 | 133 / 67 / 80 / 80 / 40 | ✅ all five work (E1 Full edits one image) |
+| Image tool | AI Poster | `ai-poster` | 400 | 400 (twice) | ✅ works, text on the poster included (`metadata.textBlocks` as strings or `{text, position}`) |
+| Image tool | AI Product Images | `ai-product-images` | 400 | 400 | ✅ works |
+| Video | Veo 3 | `veo3` | 1,500 (fixed 5 s) | 1,500 | ✅ works |
+| Video | Kling O1 | `kling-o1` | 1,000 / 2,000 (720p, 5 / 10 s), 1,400 / 2,800 (1080p); editing a video 300 per s (720p) | 1,000 (5 s) | ✅ works; new videos are 5 or 10 s |
+| Video | Wan 3.0 Prime | `wan3.0-video-prime` | 300 (480P, 2 s) to 19,600 (1080P, 30 s), from the website's table | 300 (480P, 2 s) | ✅ works |
+| Video | Wan 2.7 | `wan-2.7` | 400 (720P, 2 s) to 3,800 (1080P, 15 s) | 400 (2 s) | ✅ works |
+| Video | Wan 2.6 | `wan-2.6` | 900 / 1,700 / 2,500 (720P, 5 / 10 / 15 s), 1,300 / 2,500 / 3,800 (1080P) | 900 (twice) | ✅ works, `16:9` / `9:16` included |
+| Video | Seedance 1.0 Pro | `seedance-1.0-pro` | 2,000 (5 s) / 4,000 (10 s) | nothing yet (still queued) | ⏳ submitted fine, but waiting in GlobalGPT's own queue ("High demand right now") since 11:25; the website shows it as queued too |
+| Video | HeyGen avatar video | `heygen-video` | quoted per video (about 1,000 per minute) | 0 | ❌ "Insufficient credit. This operation requires 'api' credits." (voices list works; same on retest) |
+| Video tool | Video Upscale | `video-upscale` | 35 / 125 / 498 per second (720p / 1080p / 4K) | 71 (2 s, 720p) | ✅ works |
+| Video tool | Video Sound | `video-sound` | 1.5 per second | 3 (2 s) | ✅ works |
+| Video tool | Video Reframe | `video-reframe` | 200 per second | 400 (2 s) | ✅ works |
+| Video tool | Talking Photo | `talking-photo` | 83 / 150 per second of generated speech (720p / 1080p) | 250 (3 s of speech for a two-word script) | ✅ works; the estimate can be low, the bill follows the speech length |
+| Video tool | Video Translator | `video-translate` | 222 per second | 666 (3 s) | ✅ works on a clip with speech; a clip without speech failed (not charged) |
+| 3D | Hunyuan 3D 3.1 / Tripo h3.1 / Meshy 7 / TRELLIS 3D / Rodin Gen-2 | `hunyuan-3d-3.1` / `tripo-h3.1` / `meshy-7` / `trellis-3d` / `rodin-gen-2` | 100 / 660 textured (default; 330 untextured) / 2,640 full (default; 1,760 preview) / 500 / 1,400 | 100 / 660 / 2,640 / 500 / 1,400 | ✅ all five work (GLB) |
+| Speech to text | Scribe v2 / v1 | `scribe-v2` / `scribe-v1` | 12 per minute (v1 billed by the second) | 12 / 5 | ✅ both work (return a .txt transcript) |
+| Detector | AI Image Detector | `ai-image-detector` | 20 | 20 | ✅ works (image URL or data: URI; added to the media library if needed; scores come back directly) |
+| Detector | AI Video Detector | `ai-video-detector` | 20 | 0 (current discount) | ✅ works (checks one frame, cut automatically for videos on GlobalGPT; `metadata.frame_ms`) |
 
 Issues found in the live test and fixed the same day: AI Poster text blocks, Kling O1 lengths, Wan 2.6 sizes, website errors that said "refused the chat", 3D results labelled `image`, failed tasks shown with their (released) reservation as spent, and `glbgpt_usage` not listing website generations (now under `recent_website`).
 
