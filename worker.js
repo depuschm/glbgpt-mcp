@@ -1175,7 +1175,7 @@ const handlers = {
   async glbgpt_usage(ctx, a) {
     const limit = new CreditLimit(ctx.env);
     const n = Number.isInteger(a.recent) ? a.recent : 10;
-    let recent, recentWebsite;
+    let recent, recentWebsite, charges;
     if (n > 0) {
       try {
         recent = list(await new GlobalGPT(ctx.env).tasks(n)).map(taskView);
@@ -1183,6 +1183,12 @@ const handlers = {
         recent = `Couldn't load recent generations: ${e.message}`;
       }
       if (ctx.env.GLBGPT_TOKEN) {
+        try {
+          const b = await webRequest(ctx.env, "GET", `${WEB}/user-api/api/user/bill/list?page=1&pagesize=${Math.min(50, n)}&direction=all`);
+          charges = (Array.isArray(b?.data?.list) ? b.data.list : []).slice(0, n);
+        } catch (e) {
+          charges = `Couldn't load the credit records: ${e.message}`;
+        }
         try {
           recentWebsite = await websiteRecent(ctx.env, n);
         } catch (e) {
@@ -1196,6 +1202,7 @@ const handlers = {
       limit_resets: `midnight ${LIMIT_TIMEZONE}`,
       ...(recent !== undefined ? { recent } : {}),
       ...(recentWebsite !== undefined ? { recent_website: recentWebsite } : {}),
+      ...(charges !== undefined ? { credit_records: charges } : {}),
       balance: "GlobalGPT's API doesn't report the credit balance; see the Usage page on glbgpt.com.",
     };
   },
