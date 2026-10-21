@@ -3,10 +3,10 @@ main = "worker.js"
 compatibility_date = "2025-09-01"
 
 # Keep the variables set in the Cloudflare dashboard (DAILY_CREDIT_LIMIT, DISABLE_URL_SECRET) when deploying from GitHub.
-# Secrets (GLBGPT_TOKEN, CONNECTOR_SECRET) are never touched by deploys.
+# Secrets (GLBGPT_API_KEY, CONNECTOR_SECRET) are never touched by deploys.
 keep_vars = true
 
-# Counts the credits spent through this connector per day (used by DAILY_CREDIT_LIMIT and glbgpt_account).
+# Counts the credits spent through this connector per day (used by DAILY_CREDIT_LIMIT and glbgpt_usage).
 [[kv_namespaces]]
 binding = "CREDITS"
 id = "5a735ec1d83b461cb2cc38238c6b4d5f" # glbgpt-mcp-credits
