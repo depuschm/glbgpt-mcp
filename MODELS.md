@@ -7,7 +7,7 @@ Snapshot of what this connector can use, checked on **21 October 2026**. GlobalG
 - **Website media**: images, videos, tools, 3D and speech to text only on glbgpt.com, also through `GLBGPT_TOKEN`.
 - **Not supported**: on glbgpt.com, but not reachable through this connector (yet).
 
-Totals: **103 through the API** (42 chat, 29 image, 21 video, 11 audio), **18 more chat models through the website**, and **37 website-only media models and tools** (not yet tested live).
+Totals: **103 through the API** (42 chat, 29 image, 21 video, 11 audio), **18 more chat models through the website**, and **37 website-only media models and tools** (tested live on 21 October 2026, see below).
 
 ## Chat
 
@@ -187,32 +187,37 @@ Price in credits per video, at the default resolution and length.
 
 Images, videos, tools, 3D and speech to text that only glbgpt.com has. `glbgpt_generate` sends them through the website's own endpoints with your login token, using the request formats read from the website's code on 21 October 2026. `glbgpt_list_models` shows each one's inputs (`usage`).
 
-**Status: wired up and tested against a mock, not yet tested live.** Prices are the website's list prices; for videos they're estimates (GlobalGPT bills the exact amount).
+**Status: tested live on 21 October 2026** with one generation each at the cheapest settings. Prices are the website's list prices; for videos they're estimates (GlobalGPT bills the exact amount).
 
-| Kind | Model | ID | From (credits) |
-|---|---|---|---|
-| Image | Ideogram 4.5 | `ideogram-4.5` | 27 (very low) to 730 |
-| Image | Ideogram 3.0 / Turbo / Quality | `ideogram-3.0` / `ideogram-3.0-turbo` / `ideogram-3.0-quality` | 200 / 100 / 300 |
-| Image | Midjourney | `midjourney` | 100 |
-| Image | MAI Image 2.6 / 2.6 Flash | `mai-image-2.6` / `mai-image-2.6-flash` | 104 / 52 |
-| Image | Krea 3 | `krea-3` | 25 (0.5K) |
-| Image | Qwen Image 3.0 / 3.0 Pro | `qwen-image-3.0` / `qwen-image-3.0-pro` | 100 / 133 |
-| Image | FLUX.3 Klein | `flux-3-klein` | 21 (768sq) |
-| Image | HiDream O1 / O1 Dev / E1 Full / I1 Full / I1 Dev | `hidream-o1` / `hidream-o1-dev` / `hidream-e1-full` / `hidream-i1-full` / `hidream-i1-dev` | 133 / 67 / 80 / 80 / 40 |
-| Image tool | AI Poster / AI Product Images | `ai-poster` / `ai-product-images` | 400 / 400 |
-| Video | Veo 3 | `veo3` | 1,500 |
-| Video | Kling O1 | `kling-o1` | about 200 per second |
-| Video | Wan 3.0 Prime | `wan3.0-video-prime` | about 160 per second |
-| Video | Wan 2.7 / Wan 2.6 | `wan-2.7` / `wan-2.6` | about 200 per second |
-| Video | Seedance 1.0 Pro | `seedance-1.0-pro` | 2,000 (5 s) |
-| Video | HeyGen avatar video | `heygen-video` | quoted per video (about 1,000 per minute) |
-| Video tool | Video Upscale | `video-upscale` | 35 / 125 / 498 per second (720p / 1080p / 4K) |
-| Video tool | Video Sound | `video-sound` | 1.5 per second |
-| Video tool | Video Reframe | `video-reframe` | 200 per second |
-| Video tool | Talking Photo | `talking-photo` | 83 / 150 per second of speech |
-| Video tool | Video Translator | `video-translate` | 222 per second |
-| 3D | Hunyuan 3D 3.1 / Tripo h3.1 / Meshy 7 / TRELLIS 3D / Rodin Gen-2 | `hunyuan-3d-3.1` / `tripo-h3.1` / `meshy-7` / `trellis-3d` / `rodin-gen-2` | 100 / 330 / 1,760 / 500 / 1,400 |
-| Speech to text | Scribe v2 / v1 | `scribe-v2` / `scribe-v1` | 12 per minute |
+| Kind | Model | ID | From (credits) | Live test |
+|---|---|---|---|---|
+| Image | Ideogram 4.5 | `ideogram-4.5` | 27 (very low) to 730 | ✅ works (`metadata.quality` low, 100) |
+| Image | Ideogram 3.0 / Turbo / Quality | `ideogram-3.0` / `ideogram-3.0-turbo` / `ideogram-3.0-quality` | 200 / 100 / 300 | ✅ all three work |
+| Image | Midjourney | `midjourney` | 100 | ✅ works (returns the 2x2 grid) |
+| Image | MAI Image 2.6 / 2.6 Flash | `mai-image-2.6` / `mai-image-2.6-flash` | 104 / 52 | ✅ both work |
+| Image | Krea 3 | `krea-3` | 25 (0.5K) | ✅ works (0.5K) |
+| Image | Qwen Image 3.0 / 3.0 Pro | `qwen-image-3.0` / `qwen-image-3.0-pro` | 100 / 133 | ✅ both work |
+| Image | FLUX.3 Klein | `flux-3-klein` | 21 (768sq) | ✅ works (768sq) |
+| Image | HiDream O1 / O1 Dev / E1 Full / I1 Full / I1 Dev | `hidream-o1` / `hidream-o1-dev` / `hidream-e1-full` / `hidream-i1-full` / `hidream-i1-dev` | 133 / 67 / 80 / 80 / 40 | ✅ all five work (E1 Full edits one image) |
+| Image tool | AI Poster | `ai-poster` | 400 | ⚠️ works with a prompt only; `metadata.textBlocks` as plain strings is refused (code 0, "Sorry, something went wrong") |
+| Image tool | AI Product Images | `ai-product-images` | 400 | ✅ works |
+| Video | Veo 3 | `veo3` | 1,500 | ✅ works (fixed 5 s) |
+| Video | Kling O1 | `kling-o1` | about 200 per second | ⚠️ works at 5 s; the website only takes 5 or 10 s (3 s is refused) |
+| Video | Wan 3.0 Prime | `wan3.0-video-prime` | about 160 per second | ✅ works (2 s, 480P) |
+| Video | Wan 2.7 | `wan-2.7` | about 200 per second | ✅ works (2 s) |
+| Video | Wan 2.6 | `wan-2.6` | about 200 per second | ⚠️ works only with `aspect_ratio` as a size (`1280*720`, `720*1280`, `1920*1080`, `1080*1920`); the default `16:9` is refused ("Invalid size value") |
+| Video | Seedance 1.0 Pro | `seedance-1.0-pro` | 2,000 (5 s) | ⏳ submitted fine (5 s), still processing after 30+ minutes at the time of writing |
+| Video | HeyGen avatar video | `heygen-video` | quoted per video (about 1,000 per minute) | ❌ "Insufficient credit. This operation requires 'api' credits." (voices list works) |
+| Video tool | Video Upscale | `video-upscale` | 35 / 125 / 498 per second (720p / 1080p / 4K) | ✅ works (720p) |
+| Video tool | Video Sound | `video-sound` | 1.5 per second | ✅ works |
+| Video tool | Video Reframe | `video-reframe` | 200 per second | ✅ works (9:16) |
+| Video tool | Talking Photo | `talking-photo` | 83 / 150 per second of speech | ✅ works (720p) |
+| Video tool | Video Translator | `video-translate` | 222 per second | ❌ failed with GlobalGPT's "generation service temporarily unavailable" (tested on a 2 s clip with no speech) |
+| 3D | Hunyuan 3D 3.1 / Tripo h3.1 / Meshy 7 / TRELLIS 3D / Rodin Gen-2 | `hunyuan-3d-3.1` / `tripo-h3.1` / `meshy-7` / `trellis-3d` / `rodin-gen-2` | 100 / 330 / 1,760 / 500 / 1,400 | ✅ all five work (GLB) |
+| Speech to text | Scribe v2 | `scribe-v2` | 12 per minute | ✅ works (returns a .txt transcript) |
+| Speech to text | Scribe v1 | `scribe-v1` | 12 per minute | not tested |
+
+Known connector issues found in the live test: website media errors say "refused the chat" (the chat error wording), `glbgpt_check_task` reports 3D results as `type: "image"`, and `glbgpt_usage` lists only API generations, not website ones.
 
 ## Not supported
 
