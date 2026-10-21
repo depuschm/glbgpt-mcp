@@ -4,6 +4,8 @@ A small, self-hosted [MCP](https://modelcontextprotocol.io) server on Cloudflare
 
 It uses GlobalGPT's official [API](https://www.glbgpt.com/home/api/docs) with your API key, so every model the API offers works, including new ones, without changes here. The key stays in Cloudflare's secret storage and never appears in a chat.
 
+**[MODELS.md](MODELS.md)** lists every supported model with its ID and price, which website-only chat models work, and what isn't supported.
+
 ## Tools
 
 | Tool | What it does |
