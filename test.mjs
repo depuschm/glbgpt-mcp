@@ -37,6 +37,7 @@ globalThis.fetch = async (url, init = {}) => {
     const wp = u.pathname;
     if (wp === '/ai-api/ai/task/get') { state.webPolls = (state.webPolls || 0) + 1; return res(200, state.webFail ? { code: 1, task: { status: 'failed', failedReason: 'nsfw', errorCode: 'X' } } : state.webPolls > (state.webPollsUntilDone || 0) ? { code: 1, task: { status: 'success', outputFileUrl: 'https://cdn.example/web.png', mediaType: state.webMediaType || 1 } } : { code: 1, task: { status: 'processing' } }); }
     if (wp === '/ai-api/ai/storage/upload' || wp === '/ai-api/ai/detector/frame/upload') { state.uploads = (state.uploads || 0) + 1; return res(200, { code: 1, files: [{ fileKey: wp.includes('frame') ? 'frame-key' : 'file-key' }] }); }
+    if (wp === '/ai-api/ai/assets/list') return res(200, { code: 1, data: { next_cursor: null, items: body.source_type === 'UPLOADS' ? [{ asset_id: 'up1', url: 'https://static.futureshareai.com/u/file-key.png', source_type: 'UPLOAD_FILE', media_type: 1 }] : [{ asset_id: 'a76', url: 'https://cdn.example/mine.png', source_type: 'CREATED', media_type: 1 }, { asset_id: 'a90', url: 'https://static.futureshareai.com/v/clip.mp4', source_type: 'CREATED', media_type: 2 }] } });
     if (wp === '/ai-api/ai/detector/analyze') return res(200, { code: 1, aiGenerated: { availability: 'available', score: 0.91 }, deepfake: { availability: 'available', score: 0.04 }, summary: 'Likely AI-generated' });
     if (wp === '/ai-api/ai/media/list/myCreation') return res(200, { code: 1, records: [{ id: '76', agentId: '6249', status: 'success', mediaType: 1, outputFileUrl: 'https://cdn.example/mine.png' }, { id: '77', agentId: '6233', status: 'success', mediaType: 4, outputFileUrl: 'https://cdn.example/m.glb', createAt: '2026-10-21 10:00:00' }, { id: '78', agentId: '6224', status: 'failed', mediaType: 2, failedReasonShort: 'busy' }] });
     if (wp === '/ai-api/ai/heygen/quotes/video') return res(200, { data: { currency: 'usd', estimated_amount: 0.25 } });
@@ -46,7 +47,7 @@ globalThis.fetch = async (url, init = {}) => {
     if (state.webPay) return res(200, { code: 402, message: 'pay', data: { subCode: 4002 } });
     return res(200, { code: 1, taskId: 'w1' });
   }
-  if (url.startsWith('https://cdn.example/')) return new Response(new Uint8Array([137, 80, 78, 71]), { status: 200, headers: { 'Content-Type': 'image/png', 'Content-Length': '4' } });
+  if (url.startsWith('https://cdn.example/') || url.startsWith('https://static.futureshareai.com/')) return new Response(new Uint8Array([137, 80, 78, 71]), { status: 200, headers: { 'Content-Type': 'image/png', 'Content-Length': '4' } });
   if (!url.startsWith(API)) return err(404, 'wrong_host');
   if (state.keyBad || init.headers?.Authorization !== `Bearer ${KEY}`) return err(401, 'invalid_api_key');
   const p = u.pathname.replace('/ai-api/open/v1', '');
@@ -412,21 +413,22 @@ check('failed task in usage: 0 credits, reservation shown as released', r.json.r
 reset();
 r = await tool(envT(), 'glbgpt_generate', { model: 'ai-image-detector', images: ['https://cdn.example/other.png'] });
 const an = calls.find((c) => c.path === '/ai-api/ai/detector/analyze').body;
-check('image detector: upload, analyze, scores back directly', !r.err && r.json.status === 'succeeded' && r.json.ai_generated === 0.91 && r.json.deepfake === 0.04 && r.json.summary === 'Likely AI-generated' && an.mediaFileKey === 'file-key' && an.mediaSource === 'uploaded' && an.mediaType === 'IMAGE' && an.agentId === '6200');
+check('image detector: uploaded, found in library, scores back directly', !r.err && r.json.status === 'succeeded' && r.json.ai_generated === 0.91 && r.json.deepfake === 0.04 && r.json.summary === 'Likely AI-generated' && an.mediaId === 'up1' && an.mediaSource === 'uploaded' && an.mediaType === 'IMAGE' && an.agentId === '6200' && calls.some((c) => c.path === '/ai-api/ai/storage/upload'));
 reset();
 r = await tool(envT(), 'glbgpt_generate', { model: 'ai-image-detector', images: ['https://cdn.example/mine.png'] });
 const an2 = calls.find((c) => c.path === '/ai-api/ai/detector/analyze').body;
-check('image detector: own creation analysed by id, no upload', !r.err && an2.mediaId === '76' && an2.mediaSource === 'generated' && !calls.some((c) => c.path === '/ai-api/ai/storage/upload'));
+check('image detector: library item analysed by asset id, no upload', !r.err && an2.mediaId === 'a76' && an2.mediaSource === 'generated' && !calls.some((c) => c.path === '/ai-api/ai/storage/upload'));
 reset();
 r = await tool(envT(), 'glbgpt_generate', { model: 'ai-image-detector', images: ['data:image/png;base64,iVBORw0KGgo='] });
 check('image detector: data: URI uploaded', !r.err && r.json.ai_generated === 0.91 && calls.some((c) => c.path === '/ai-api/ai/storage/upload'));
 reset();
-r = await tool(envT(), 'glbgpt_generate', { model: 'ai-video-detector', video_url: 'https://cdn.example/v.mp4', duration: 5, images: ['https://cdn.example/f.png'], metadata: { frame_ms: 1500 } });
+r = await tool(envT(), 'glbgpt_generate', { model: 'ai-video-detector', video_url: 'https://static.futureshareai.com/v/clip.mp4', duration: 5, metadata: { frame_ms: 1500 } });
 const av = calls.find((c) => c.path === '/ai-api/ai/detector/analyze').body;
-check('video detector: video + frame uploaded, frame time, duration', !r.err && av.mediaType === 'VIDEO' && av.frameFileKey === 'frame-key' && av.frameTimestampMs === 1500 && av.durationSeconds === 5 && r.json.frame_ms === 1500);
-r = await tool(envT(), 'glbgpt_generate', { model: 'ai-video-detector', video_url: 'https://cdn.example/v.mp4', duration: 5 });
-check('video detector without a frame -> asks for one', r.err && r.text.includes('still frame'));
-r = await tool(envT(), 'glbgpt_generate', { model: 'ai-video-detector', video_url: 'https://cdn.example/v.mp4', duration: 90, images: ['https://cdn.example/f.png'] });
+check('video detector: library video, frame cut on the CDN and uploaded', !r.err && av.mediaType === 'VIDEO' && av.mediaId === 'a90' && av.frameFileKey === 'frame-key' && av.frameTimestampMs === 1500 && av.durationSeconds === 5 && calls.some((c) => c.path.startsWith('/cdn-cgi/media/mode=frame,time=1.5s')));
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'ai-video-detector', video_url: 'https://cdn.example/v.mp4', duration: 5, images: ['https://cdn.example/f.png'] });
+check('video detector: other host uploaded, frame from images[0]', !r.err && calls.some((c) => c.path === '/ai-api/ai/storage/upload') && calls.find((c) => c.path === '/ai-api/ai/detector/analyze').body.frameFileKey === 'frame-key');
+r = await tool(envT(), 'glbgpt_generate', { model: 'ai-video-detector', video_url: 'https://static.futureshareai.com/v/clip.mp4', duration: 90 });
 check('video detector over 60 s refused', r.err && r.text.includes('60 seconds'));
 r = await tool(envT(), 'glbgpt_list_models', { type: 'detector' });
 check('list models type detector -> the two detectors', !r.err && r.json.models.length === 2 && r.json.models.every((m) => m.type === 'detector' && m.usage && m.price));

@@ -541,8 +541,8 @@ const WEBSITE_MEDIA_HINTS = {
   "meshy-7": "prompt or 1-4 images; seed; metadata shouldTexture (false = preview, cheaper), ultraMode, modelType standard|lowpoly|smart-topology, topology triangle|quad, targetPolycount 100-300000, shouldRemesh, symmetryMode off|auto|on, enablePbr, poseMode a-pose|t-pose, texturePrompt, enableRigging + riggingHeightMeters, enableAnimation + animationActionId 0-696; price depends on these",
   "trellis-3d": "1-5 images of the same object (no prompt); seed; metadata textureSize 512|1024|2048, generateColor, generateNormal, saveGaussianPly, returnNoBackground, ssGuidanceStrength / slatGuidanceStrength 0-10, ssSamplingSteps / slatSamplingSteps 1-50, meshSimplify 0.9-0.98",
   "rodin-gen-2": "prompt and/or up to 5 images; seed; metadata quality high|medium|low|extra-low, qualityOverride (exact polygon count), material PBR|Shaded|All, meshMode Quad|Raw, geometryFileFormat glb|usdz|fbx|obj|stl, tapose, useOriginalAlpha, bboxCondition [w, h, l], addons [HighPack]",
-  "ai-image-detector": "images[0] = the image (https URL or data: URI; JPG, PNG or WebP, up to 20 MB, at least 256 px); returns ai_generated and deepfake scores (0-1) and a summary. Use the result as a risk assessment, not proof",
-  "ai-video-detector": "video_url = the video (MP4, WebM or M4V, up to 60 s); duration = its length in seconds; images[0] = the still frame to check (https URL or data: URI), metadata.frame_ms = where that frame is in the video; checks that one frame and returns ai_generated and deepfake scores (0-1)",
+  "ai-image-detector": "images[0] = the image (https URL or data: URI; JPG, PNG or WebP, up to 20 MB, at least 256 px; it's added to the media library if it isn't there yet); returns ai_generated and deepfake scores (0-1) and a summary. Use the result as a risk assessment, not proof",
+  "ai-video-detector": "video_url = the video (MP4, WebM or M4V, up to 60 s); duration = its length in seconds; metadata.frame_ms = which moment to check (default 0; the frame is cut automatically for videos on GlobalGPT, otherwise pass it in images[0]); checks that one frame and returns ai_generated and deepfake scores (0-1)",
   "scribe-v2": "video_url = URL of the audio or video file; duration = its length in seconds (for the price); returns a transcript file", "scribe-v1": "same as scribe-v2 (older model)",
 };
 const websiteMediaEntry = (w) => ({
@@ -628,48 +628,55 @@ async function webUpload(env, path, blob, name) {
 
 const fileName = (src, fallback) => (/^https:/i.test(src || "") ? decodeURIComponent(String(src).split("?")[0].split("/").pop() || "") : "") || fallback;
 
+// The account's media library (website "Assets"): ids there are what the detectors take.
+async function listAssets(env, mediaType, source, size = 50) {
+  const data = await webRequest(env, "POST", `${WEB}/ai-api/ai/assets/list`, defined({ page_size: size, cursor: null, media_type: mediaType, source_type: source, sort: "NEWEST" }));
+  return (data?.data?.items ?? data?.items ?? []).map((x) => ({ id: String(x.asset_id ?? ""), url: x.url, source: x.source_type === "UPLOAD_FILE" || source === "UPLOADS" ? "uploaded" : "generated", raw: x }));
+}
+// A frame of a video on GlobalGPT's CDN, cut by Cloudflare (the website's own preview trick).
+const cdnFrameUrl = (videoUrl, ms) => `https://static.futureshareai.com/cdn-cgi/media/mode=frame,time=${Math.max(0, ms) / 1000}s,duration=1s,fit=contain,format=png/${videoUrl}`;
+
 async function runDetector(env, w, a) {
   if (!env.GLBGPT_TOKEN) throw new ToolError(`${w.name} is only on GlobalGPT's website, which needs GLBGPT_TOKEN (your login token) on the Worker.`);
   const video = w.detector === "VIDEO";
+  const mediaType = video ? 2 : 1;
   const src = video ? a.video_url : first(a)[0];
-  if (!src) throw new ToolError(video ? "AI Video Detector needs video_url (and duration, and the still frame to check in images[0])." : "AI Image Detector needs the image in images[0].");
+  if (!src) throw new ToolError(video ? "AI Video Detector needs video_url (and duration)." : "AI Image Detector needs the image in images[0].");
   const secs0 = video ? secs(a, 0) : 0;
   if (video && !secs0) throw new ToolError("AI Video Detector needs duration: the video's length in seconds.");
   if (video && secs0 > 60) throw new ToolError("AI Video Detector takes videos up to 60 seconds.");
-  const frameSrc = video ? first(a)[0] : undefined;
-  if (video && !frameSrc) throw new ToolError("AI Video Detector checks one still frame: pass that frame as an image in images[0] (https URL or data: URI), and metadata.frame_ms for where it is in the video.");
 
-  // The account's own creation: analyse it by id, like the website's library picker. Anything else: upload it.
-  let media = null;
-  if (/^https:/i.test(src)) {
-    try {
-      const data = await webRequest(env, "POST", `${WEB}/ai-api/ai/media/list/myCreation`, { page: 1, size: 50, status: "success", mediaType: video ? "2" : "1", productNo: "glbgpt" });
-      const rec = (data?.records ?? data?.data?.records ?? []).find((r) => r?.outputFileUrl === src);
-      if (rec?.id !== undefined) media = { mediaId: String(rec.id), mediaSource: "generated" };
-    } catch {}
-  }
-  if (!media) {
+  // 1) Already in the library (made on GlobalGPT, or uploaded before)? 2) Otherwise upload it, which adds it to the library.
+  let asset = null;
+  if (/^https:/i.test(src)) asset = (await listAssets(env, mediaType)).find((x) => x.url === src) ?? null;
+  if (!asset) {
     const blob = await loadMedia(src, DETECTOR_MAX_BYTES[w.detector], video ? "video" : "image");
     const key = await webUpload(env, "/ai-api/ai/storage/upload", blob, fileName(src, video ? "video.mp4" : "image.png"));
-    media = { mediaId: key, mediaFileKey: key, mediaSource: "uploaded" };
+    const uploads = await listAssets(env, mediaType, "UPLOADS", 10);
+    asset = uploads.find((x) => String(x.url || "").includes(key) || String(x.raw?.file_key ?? "") === key) ?? uploads[0] ?? null;
+    if (!asset) throw new ToolError("The upload didn't show up in the GlobalGPT media library, so the detector can't use it.");
+    asset.source = "uploaded";
   }
   let frame = {};
   if (video) {
-    const blob = await loadMedia(frameSrc, 20 * 1024 * 1024, "frame image");
     const frameMs = Math.max(0, Math.round(Number(meta(a).frame_ms) || 0));
+    const frameSrc = first(a)[0] || (/^https:\/\/static\.futureshareai\.com\//i.test(asset.url || "") ? cdnFrameUrl(asset.url, frameMs) : null);
+    if (!frameSrc) throw new ToolError("Couldn't cut a frame from this video: pass the still frame to check in images[0] (https URL or data: URI).");
+    const blob = await loadMedia(frameSrc, 20 * 1024 * 1024, "video frame");
     frame = { frameFileKey: await webUpload(env, "/ai-api/ai/detector/frame/upload", blob, `detector-frame-${frameMs}.png`), frameTimestampMs: frameMs };
   }
   const r = await webRequest(env, "POST", `${WEB}/ai-api/ai/detector/analyze`, defined({
-    productNo: "glbgpt", agentId: w.agentId, ...media, mediaType: w.detector, durationSeconds: video ? Math.ceil(secs0) : undefined, ...frame,
+    productNo: "glbgpt", agentId: w.agentId, mediaId: asset.id, mediaSource: asset.source, mediaType: w.detector,
+    durationSeconds: video ? Math.ceil(secs0) : undefined, ...frame,
   }));
   const d = r?.data && typeof r.data === "object" && !Array.isArray(r.data) ? r.data : r;
-  const score = (m) => (m && typeof m === "object" ? (m.availability === "available" || typeof m.score === "number" ? m.score : null) : typeof m === "number" ? m : null);
+  const score = (m) => (m && typeof m === "object" ? (typeof m.score === "number" ? m.score : null) : typeof m === "number" ? m : null);
   const { code, message, ...rest } = d || {};
   return defined({
     status: "succeeded", via: "website", model: w.id, type: "analysis",
     ai_generated: score(d?.aiGenerated), deepfake: score(d?.deepfake), summary: str(d?.summary),
     ...(video ? { frame_ms: frame.frameTimestampMs } : {}),
-    details: rest,
+    media_id: asset.id, details: rest,
     note: "Scores are 0-1 likelihoods. Use them as a risk assessment, not proof.",
   });
 }
