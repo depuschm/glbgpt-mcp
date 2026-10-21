@@ -18,7 +18,7 @@ const KV = { get: async (k) => kvStore.get(k) ?? null, put: async (k, v) => { kv
 // Fake GlobalGPT API
 const calls = [];
 const state = {};
-const defaults = { price: 200, reserved: undefined, polls: 0, pollsUntilDone: 0, fail: null, submitStatus: 200, submitNetErrors: 0, keyBad: false, chatJsonReject: false, estimateStatus: 200, webPay: false, webFail: false, webPolls: 0, webPollsUntilDone: 0, webMediaType: 0 };
+const defaults = { price: 200, reserved: undefined, polls: 0, pollsUntilDone: 0, fail: null, submitStatus: 200, submitNetErrors: 0, keyBad: false, chatJsonReject: false, estimateStatus: 200, webPay: false, webFail: false, webPolls: 0, webPollsUntilDone: 0, webMediaType: 0, webMjButtons: false };
 const res = (status, d, headers = {}) => new Response(JSON.stringify(d), { status, headers: { 'Content-Type': 'application/json', ...headers } });
 const err = (status, code, message = code) => res(status, { error: { message, type: code, code } });
 globalThis.fetch = async (url, init = {}) => {
@@ -35,7 +35,7 @@ globalThis.fetch = async (url, init = {}) => {
   if ((url.startsWith('https://api2.glbgpt.com/ai-api/') || url.startsWith('https://api2.glbgpt.com/user-api/')) && !url.startsWith(API) && !url.endsWith('/agent/chatStream')) {
     if (init.headers?.Authorization !== `Bearer ${TOKEN}`) return res(200, { code: 401, message: 'token invalid' });
     const wp = u.pathname;
-    if (wp === '/ai-api/ai/task/get') { state.webPolls = (state.webPolls || 0) + 1; return res(200, state.webFail ? { code: 1, task: { status: 'failed', failedReason: 'nsfw', errorCode: 'X' } } : state.webPolls > (state.webPollsUntilDone || 0) ? { code: 1, task: { status: 'success', outputFileUrl: 'https://cdn.example/web.png', mediaType: state.webMediaType || 1 } } : { code: 1, task: { status: 'processing' } }); }
+    if (wp === '/ai-api/ai/task/get') { state.webPolls = (state.webPolls || 0) + 1; return res(200, state.webFail ? { code: 1, task: { status: 'failed', failedReason: 'nsfw', errorCode: 'X' } } : state.webPolls > (state.webPollsUntilDone || 0) ? { code: 1, task: { status: 'success', outputFileUrl: 'https://cdn.example/web.png', mediaType: state.webMediaType || 1, conversationId: 'c1', input: JSON.stringify({ prompt: 'a cat' }), output: state.webMjButtons ? JSON.stringify({ action: 'IMAGINE', buttons: [{ customId: 'MJ::U1', label: 'U1' }, { customId: 'MJ::U2', label: 'U2' }, { customId: 'MJ::reroll', label: '', emoji: '🔄' }] }) : undefined } } : { code: 1, task: { status: 'processing' } }); }
     if (wp === '/ai-api/ai/storage/upload' || wp === '/ai-api/ai/detector/frame/upload') { state.uploads = (state.uploads || 0) + 1; return res(200, { code: 1, files: [{ fileKey: wp.includes('frame') ? 'frame-key' : 'file-key' }] }); }
     if (wp === '/user-api/api/user/bill/list') return res(200, { code: 1, data: { list: [{ direction: 'decrease', model: 'ai-video-detector', display_name: 'AI Video Detector', cost: 0, original_cost: 20, source_type: 'chat_usage', created_at: '2026-10-21' }, { direction: 'increase', cost: 130, source_type: 'daily_checkin', category_name: 'Daily Check-in Reward', created_at: '2026-10-21' }] } });
     if (wp === '/ai-api/ai/assets/list') return res(200, { code: 1, data: { next_cursor: null, items: body.source_type === 'UPLOADS' ? [{ asset_id: 'up1', url: 'https://static.futureshareai.com/u/file-key.png', source_type: 'UPLOAD_FILE', media_type: 1 }] : [{ asset_id: 'a76', url: 'https://cdn.example/mine.png', source_type: 'CREATED', media_type: 1 }, { asset_id: 'a90', url: 'https://static.futureshareai.com/v/clip.mp4', source_type: 'CREATED', media_type: 2 }] } });
@@ -54,7 +54,7 @@ globalThis.fetch = async (url, init = {}) => {
   const p = u.pathname.replace('/ai-api/open/v1', '');
   if (p === '/models' && init.method === 'GET') return res(200, { object: 'list', data: [{ id: 'nano-banana-2.1', type: u.searchParams.get('type') || 'image', price: { '1K': 200 } }, { id: 'kling-v3', type: 'video' }] });
   if (p.startsWith('/models/')) return /\/(nope|claude-opus-5\.5|heygen-video)$/.test(p) ? err(404, 'model_not_found', 'Unknown model') : res(200, { id: decodeURIComponent(p.slice(8)), parameters: { resolution: ['1K', '2K'] } });
-  if (p === '/tasks/estimate' && ['hidream-o1', 'kling-o1', 'heygen-video', 'video-upscale', 'tripo-h3.1', 'wan-2.6', 'ideogram-4.5', 'scribe-v2', 'made-up-media', 'ai-poster', 'ai-product-images', 'midjourney', 'ideogram-3.0', 'video-translate', 'talking-photo', 'meshy-7', 'wan-2.7', 'seedance-1.0-pro', 'ai-image-detector', 'ai-video-detector', 'wan3.0-video-prime'].includes(body.model)) return err(404, 'model_not_found', `Unknown model ${body.model}`);
+  if (p === '/tasks/estimate' && ['hidream-o1', 'kling-o1', 'heygen-video', 'video-upscale', 'tripo-h3.1', 'wan-2.6', 'ideogram-4.5', 'scribe-v2', 'made-up-media', 'ai-poster', 'ai-product-images', 'midjourney', 'ideogram-3.0', 'video-translate', 'talking-photo', 'meshy-7', 'wan-2.7', 'seedance-1.0-pro', 'ai-image-detector', 'ai-video-detector', 'wan3.0-video-prime', 'logo-maker'].includes(body.model)) return err(404, 'model_not_found', `Unknown model ${body.model}`);
   if (p === '/tasks/estimate') {
     if (state.estimateStatus !== 200) return err(state.estimateStatus, state.estimateStatus === 402 ? 'insufficient_credit' : 'invalid_request', 'nope');
     return res(200, { credits: state.price, billing_model: `${body.model}-tier` });
@@ -454,6 +454,25 @@ check('detector run counted against the daily limit (20)', !r.err && kvStore.get
 reset();
 r = await tool(envT({ DAILY_CREDIT_LIMIT: '10' }), 'glbgpt_generate', { model: 'ai-image-detector', images: ['https://cdn.example/mine.png'] });
 check('detector refused when over the daily limit', r.err && r.text.includes('Daily limit') && !calls.some((c) => c.path === '/ai-api/ai/detector/analyze'));
+
+// logo maker, midjourney buttons
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'logo-maker', aspect_ratio: '1:1', metadata: { brandName: 'Apple Market', style: 'minimalist', industry: 'food' } });
+const lm = calls.find((c) => c.path === '/ai-api/ai/logo-maker/generate').body;
+check('logo maker: brand, style, industry, size, agent 6128, 100 credits', !r.err && lm.brandName === 'Apple Market' && lm.style === 'minimalist' && lm.industry === 'food' && lm.size === '1:1' && lm.agentId === '6128' && r.json.credits_estimated === 100);
+r = await tool(envT(), 'glbgpt_generate', { model: 'logo-maker' });
+check('logo maker without brand or prompt -> asks', r.err && r.text.includes('brandName'));
+r = await tool(envT(), 'glbgpt_generate', { model: 'logo-maker', metadata: { brandName: 'X', style: 'neon' } });
+check('logo maker bad style refused', r.err && r.text.includes('minimalist'));
+reset({ webMjButtons: true });
+r = await tool(envT(), 'glbgpt_generate', { model: 'midjourney', prompt: 'a cat' });
+check('midjourney result lists its buttons', !r.err && JSON.stringify(r.json.actions) === JSON.stringify(['U1', 'U2', 'reroll']) && r.json.actions_note);
+reset({ webMjButtons: true });
+r = await tool(envT(), 'glbgpt_generate', { model: 'midjourney', metadata: { action: 'u2', task_id: 'web:w9' } });
+const ma = calls.find((c) => c.path === '/ai-api/ai/zeakai/mj/submit/action');
+check('midjourney action: U2 of the given task, no prompt needed', !r.err && ma && ma.body.image_request.customId === 'MJ::U2' && ma.body.image_request.taskId === 'w9' && ma.body.image_request.model === 'mj-zeakai-action' && ma.body.conversationId === 'c1' && ma.body.name === 'U2' && !('action' in ma.body.image_request));
+r = await tool(envT(), 'glbgpt_generate', { model: 'midjourney', metadata: { action: 'V9', task_id: 'web:w9' } });
+check('midjourney unknown button -> lists the buttons', r.err && r.text.includes('U1, U2, reroll'));
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

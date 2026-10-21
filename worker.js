@@ -252,7 +252,7 @@ const perSecond = (rate, d) => (a) => Math.round(rate * secs(a, d));
 const resOf = (a, d) => String(a.resolution || d);
 // Any metadata key is passed on to the website's request, so every field its own form sends can be set.
 // Fields the connector sets itself (routing, billing, the enhance toggle) can't be overridden this way.
-const PASS_RESERVED = new Set(["agentId", "productNo", "shareStatus", "enhancePrompt", "enhance_prompt"]);
+const PASS_RESERVED = new Set(["agentId", "productNo", "shareStatus", "enhancePrompt", "enhance_prompt", "action", "task_id"]);
 const extras = (a) => Object.fromEntries(Object.entries(meta(a)).filter(([k, v]) => !PASS_RESERVED.has(k) && v !== undefined && v !== null));
 const defined = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 const enhanceOf = (a) => meta(a).enhancePrompt === true || meta(a).enhance_prompt === true;
@@ -278,6 +278,8 @@ function posterTextBlocks(list) {
   if (blocks.length === 3 && Object.keys(per).length < 2) throw new ToolError("With 3 AI Poster text blocks, use at least 2 different positions.");
   return blocks;
 }
+const LOGO_STYLES = ["auto", "minimalist", "hand-drawn", "geometric", "line-art", "vintage", "abstract"];
+const LOGO_INDUSTRIES = ["technology", "ecommerce", "food", "health", "creative", "saas", "hospitality", "education", "nonprofit", "fashion", "realestate", "financial", "media", "manufacturing", "professional"];
 // Wan 2.6 takes a pixel size, not a ratio; the website picks it from the ratio and resolution.
 const WAN26_SIZES = { "720P": { "16:9": "1280*720", "9:16": "720*1280" }, "1080P": { "16:9": "1920*1080", "9:16": "1080*1920" } };
 function wan26Size(a) {
@@ -440,9 +442,31 @@ const WEBSITE_MEDIA_MODELS = {
   "hidream-i1-full": hidream("6246", "hidream-i1-full", "HiDream I1 Full", 80, { noImages: true }),
   "hidream-i1-dev": hidream("6245", "hidream-i1-dev", "HiDream I1 Dev", 40, { noImages: true }),
   "midjourney": {
-    name: "Midjourney", type: "image", agentId: 4115, path: "/ai-api/ai/zeakai/mj/submit/imagine", credits: () => 150, // charged 150 in the live test (the website lists 100) wrap: "image_request",
+    name: "Midjourney", type: "image", agentId: 4115, wrap: "image_request",
+    path: (a) => (a._mjAction ? "/ai-api/ai/zeakai/mj/submit/action" : "/ai-api/ai/zeakai/mj/submit/imagine"),
+    credits: () => 150, // charged 150 in the live test (the website lists 100)
+    // metadata.action (a button of a finished Midjourney task: U1-U4, V1-V4, reroll, "Upscale (Subtle)", ...) + metadata.task_id.
+    prepare: async (env, a) => {
+      const m = meta(a);
+      if (!str(m.action)) return a;
+      const parentId = String(m.task_id || "").replace(/^web:/, "");
+      if (!parentId) throw new ToolError("A Midjourney action needs metadata.task_id: the task_id of the Midjourney result to act on.");
+      const t = (await webRequest(env, "POST", `${WEB}/ai-api/ai/task/get`, { taskId: parentId }))?.task;
+      if (!t) throw new ToolError(`No Midjourney task found with id ${parentId}.`);
+      const buttons = mjButtons(t);
+      const want = String(m.action).trim().toLowerCase();
+      const btn = buttons.find((b) => b.name.toLowerCase() === want);
+      if (!btn) throw new ToolError(`That Midjourney task has no "${m.action}" button. Its buttons: ${buttons.map((b) => b.name).join(", ") || "none"}.`);
+      let input = {};
+      try { input = typeof t.input === "string" ? JSON.parse(t.input) : t.input || {}; } catch {}
+      return { ...a, _mjAction: { customId: btn.customId, label: btn.name, taskId: parentId, conversationId: t.conversationId, taskName: `${t.sourceInput || input.prompt || ""} ${btn.name}`.trim() } };
+    },
     body: (a) => {
       const m = meta(a);
+      if (a._mjAction) {
+        const x = a._mjAction;
+        return { image_request: { botType: "", customId: x.customId, enableRemix: true, model: "mj-zeakai-action", taskId: x.taskId }, name: x.label, conversationId: x.conversationId, taskName: x.taskName };
+      }
       const { prompt, version, aspect } = mjPrompt(a);
       oneOf("Midjourney", "aspect ratios", aspect, ["1:1", "4:3", "3:4", "16:9", "9:16"]);
       const images = first(a).slice(0, 5);
@@ -453,6 +477,18 @@ const WEBSITE_MEDIA_MODELS = {
   "ai-poster": {
     name: "AI Poster", type: "image", agentId: "6140", path: "/ai-api/ai/tools/poster/generate", credits: () => 400,
     body: (a) => ({ prompt: a.prompt, aspectRatio: a.aspect_ratio || "1:1", textBlocks: posterTextBlocks(meta(a).textBlocks), usageContext: meta(a).usageContext || "" }),
+  },
+  "logo-maker": {
+    name: "Logo Maker", type: "image", agentId: "6128", path: "/ai-api/ai/logo-maker/generate", credits: () => 100, promptOptional: true,
+    body: (a) => {
+      const m = meta(a);
+      const brandName = str(m.brandName) || "";
+      const additionalPrompt = str(a.prompt) || "";
+      if (!brandName && !additionalPrompt) throw new ToolError("Logo Maker needs metadata.brandName (the company or brand name) or a prompt.");
+      if (m.style) oneOf("Logo Maker", "style", m.style, LOGO_STYLES);
+      if (m.industry) oneOf("Logo Maker", "industry", m.industry, LOGO_INDUSTRIES);
+      return { brandName, industry: m.industry || "", style: m.style || "", size: a.aspect_ratio || "", additionalPrompt, model: "Logo Maker" };
+    },
   },
   "ai-product-images": {
     name: "AI Product Images", type: "image", agentId: "6141", path: "/ai-api/ai/tools/product-images/generate", credits: () => 400,
@@ -552,7 +588,8 @@ const WEBSITE_MEDIA_HINTS = {
   "mai-image-2.6": "prompt; aspect_ratio auto|1:1|16:9|9:16|4:3|3:4|3:2|2:3|4:5|5:4|2:1|1:2|21:9|9:21; resolution 1K|2K (both ignored with images); up to 5 images", "mai-image-2.6-flash": "same as mai-image-2.6",
   "hidream-o1": "prompt; aspect_ratio 1:1|16:9|9:16|4:3|3:4|3:2|2:3|21:9|9:21; resolution 2K|4K; up to 3 images", "hidream-o1-dev": "same as hidream-o1",
   "hidream-e1-full": "prompt = the edit instruction; exactly 1 image", "hidream-i1-full": "prompt; aspect_ratio 1:1|16:9|9:16|4:3|3:4|3:2|2:3|21:9|9:21; resolution 1K|2K (text only)", "hidream-i1-dev": "same as hidream-i1-full",
-  "midjourney": "prompt (--v and --ar are moved into their fields, other flags stay); aspect_ratio 1:1|4:3|3:4|16:9|9:16; images (up to 5) as image prompts; metadata.version 8.2 (default)|8|7.0|6.1|6.0|niji6|niji5|niji4, imageQuality 0.25|0.5|1|2, artisticLevel 50|100|250|750, style, view, characterShot, lighting, sref, cref, cw; returns the 2x2 grid",
+  "midjourney": "prompt (--v and --ar are moved into their fields, other flags stay); aspect_ratio 1:1|4:3|3:4|16:9|9:16; images (up to 5) as image prompts; metadata.version 8.2 (default)|8|7.0|6.1|6.0|niji6|niji5|niji4, imageQuality 0.25|0.5|1|2, artisticLevel 50|100|250|750, style, view, characterShot, lighting, sref, cref, cw; returns the 2x2 grid and its buttons (actions). To press one (upscale U1-U4, vary V1-V4, reroll, ...): metadata.action = the button, metadata.task_id = the grid's task_id",
+  "logo-maker": "metadata.brandName (the company or brand name) and/or prompt (extra wishes); metadata.style auto|minimalist|hand-drawn|geometric|line-art|vintage|abstract; metadata.industry technology|ecommerce|food|health|creative|saas|hospitality|education|nonprofit|fashion|realestate|financial|media|manufacturing|professional; aspect_ratio 1:1|1:3|3:1|1:2|2:1|9:16|16:9|10:16|16:10|2:3|3:2|3:4|4:3|4:5|5:4",
   "ai-poster": "prompt; aspect_ratio 1:1|16:9|9:16; metadata.textBlocks: up to 3 texts, each a string or {text, position top|middle|bottom}; metadata.usageContext social-media|school-campus|club-team|community|party-event|store-business|real-estate|announcement",
   "ai-product-images": "images[0] = the product photo; prompt; aspect_ratio 1:1|3:4|16:9|9:16; metadata.text and textPosition top|middle|bottom; metadata.usageContext main-product|lifestyle|product-detail|feature-highlight|comparison|ad-creative|website-hero|promotional-sale",
   "veo3": "prompt; aspect_ratio 16:9|9:16; resolution 720p|1080p; images[0] as start frame; fixed 5 s",
@@ -583,7 +620,7 @@ const websiteMediaEntry = (w) => ({
 
 // Prices the website shows only as a range (or that depend on the input's length).
 const APPROX_PRICE = new Set(["midjourney", "talking-photo", "scribe-v2", "scribe-v1"]);
-const WEBSITE_MEDIA_ALIASES = { "krea-v3": "krea-3", "flux-3-image-klein": "flux-3-klein", "veo-3": "veo3", "kling-video-o1": "kling-o1", "wan-3.0-prime": "wan3.0-video-prime", "wan2.6": "wan-2.6", "seedance-v1-pro": "seedance-1.0-pro", "heygen": "heygen-video", "meshy-v7": "meshy-7", "hunyuan3d-v3.1": "hunyuan-3d-3.1", "rodin-gen2": "rodin-gen-2", "scribe": "scribe-v2", "scribe_v2": "scribe-v2", "scribe_v1": "scribe-v1", "video-sound-fx": "video-sound", "video-expand": "video-reframe" };
+const WEBSITE_MEDIA_ALIASES = { "logo": "logo-maker", "krea-v3": "krea-3", "flux-3-image-klein": "flux-3-klein", "veo-3": "veo3", "kling-video-o1": "kling-o1", "wan-3.0-prime": "wan3.0-video-prime", "wan2.6": "wan-2.6", "seedance-v1-pro": "seedance-1.0-pro", "heygen": "heygen-video", "meshy-v7": "meshy-7", "hunyuan3d-v3.1": "hunyuan-3d-3.1", "rodin-gen2": "rodin-gen-2", "scribe": "scribe-v2", "scribe_v2": "scribe-v2", "scribe_v1": "scribe-v1", "video-sound-fx": "video-sound", "video-expand": "video-reframe" };
 const websiteMedia = (id) => {
   const key = String(id || "").trim().toLowerCase();
   const k = WEBSITE_MEDIA_ALIASES[key] ?? key;
@@ -743,12 +780,22 @@ const webTaskId = (data) => data?.taskId ?? data?.data?.taskId ?? data?.data?.id
 // The website's media types (1 image, 2 video, 3 audio and transcripts, 4 3D).
 const MEDIA_TYPES = { 1: "image", 2: "video", 3: "audio", 4: "3d" };
 
+// Midjourney result buttons (U1-U4, V1-V4, reroll, Upscale/Vary variants), from the task's output.
+function mjButtons(t) {
+  let out = t?.output;
+  if (typeof out === "string") { try { out = JSON.parse(out); } catch { out = null; } }
+  return (Array.isArray(out?.buttons) ? out.buttons : []).filter((b) => b?.customId).map((b) => ({ customId: b.customId, name: str(b.label) || (b.emoji === "🔄" ? "reroll" : str(b.emoji) || "") })).filter((b) => b.name);
+}
+
 // One website task's state, in the same shape as the API's task view.
 async function webTask(env, id) {
   const data = await webRequest(env, "POST", `${WEB}/ai-api/ai/task/get`, { taskId: id });
   const t = data?.task;
   if (!t) throw new ToolError(`No website task found with id ${id}.`);
-  if (t.status === "success") return { status: "succeeded", url: t.outputFileUrl, type: MEDIA_TYPES[t.mediaType] ?? "image" };
+  if (t.status === "success") {
+    const actions = mjButtons(t).map((b) => b.name);
+    return { status: "succeeded", url: t.outputFileUrl, type: MEDIA_TYPES[t.mediaType] ?? "image", ...(actions.length ? { actions } : {}) };
+  }
   if (t.status === "failed") return { status: "failed", reason: str(t.failedReasonShort) ?? str(t.failedReason) ?? str(t.errorCode) ?? "The generation failed." };
   return { status: "processing" };
 }
@@ -768,7 +815,8 @@ async function websiteGenerate(ctx, w, a, limit) {
   if (!env.GLBGPT_TOKEN) throw new ToolError(`${w.name} is only on GlobalGPT's website, which needs GLBGPT_TOKEN (your login token) on the Worker.`);
   if (first(a).some((u) => /^data:/i.test(u))) throw new ToolError(`${w.name} is only on GlobalGPT's website, which takes images as public https URLs, not data: URIs.`);
   const isTool = typeof w.path === "string" && w.path.includes("video-tools");
-  if ((w.type === "image" || w.type === "video") && !w.heygen && !isTool && !str(a.prompt)) throw new ToolError(`${w.name} needs a prompt.`);
+  if (w.prepare) a = await w.prepare(env, a);
+  if ((w.type === "image" || w.type === "video") && !w.heygen && !isTool && !w.promptOptional && !a._mjAction && !str(a.prompt)) throw new ToolError(`${w.name} needs a prompt.`);
   let body, credits, submit;
   if (w.heygen) {
     const m = meta(a);
@@ -825,7 +873,7 @@ async function waitForWebTask(env, limit, taskId, deadline) {
     if (t.status === "succeeded") {
       if (!t.url) throw new ToolError("The task succeeded but returned no URL.");
       await limit.kv?.delete(`task:${taskId}`).catch(() => {});
-      return { task_id: taskId, status: "succeeded", url: t.url, type: t.type, via: "website" };
+      return { task_id: taskId, status: "succeeded", url: t.url, type: t.type, via: "website", ...(t.actions ? { actions: t.actions, actions_note: "Midjourney buttons: call glbgpt_generate with model midjourney, metadata.action (one of these) and metadata.task_id (this task_id)." } : {}) };
     }
     if (t.status === "failed") {
       await limit.release(taskId).catch(() => {});
