@@ -621,7 +621,7 @@ const WEBSITE_MEDIA_HINTS = {
 };
 const websiteMediaEntry = (w) => ({
   id: w.id, type: w.type, source: "website", description: `${w.name} (only on GlobalGPT's website)`, usage: WEBSITE_MEDIA_HINTS[w.id],
-  ...(w.heygen ? { price: "quoted per video (about 1,000 credits per minute)" } : w.translate ? { price: "billed by length (not shown on the website)" } : w.detector ? { price: "20 credits per run (from the account's credit records; the website doesn't show it)" } : { price_from: Math.round(Number(w.credits({ prompt: "x", duration: 5 })) || 0) }),
+  ...(w.heygen ? { price: "quoted per video (about 1,000 credits per minute)" } : w.translate ? { price: "free in the 21 Oct test (0 credits for a short text)" } : w.detector ? { price: "20 credits per run (from the account's credit records; the website doesn't show it)" } : { price_from: Math.round(Number(w.credits({ prompt: "x", duration: 5 })) || 0) }),
 });
 
 // Prices the website shows only as a range (or that depend on the input's length).
