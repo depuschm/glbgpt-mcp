@@ -18,6 +18,8 @@ Every generation is priced with GlobalGPT's estimate first, then submitted with 
 
 GlobalGPT's API limits: 60 requests per minute, 5 chat streams and 10 media tasks at once, per account. It only spends paid credits.
 
+**Website-only chat models.** glbgpt.com has chat models the API doesn't offer (e.g. Claude Opus 5.5, GPT-6.1 Sol, Gemini 4 Argon). With the optional `GLBGPT_TOKEN` set, `glbgpt_chat` sends a model the API refuses through the website's own chat instead, and `glbgpt_list_models` lists those models with `source: "website"`. They take text only (no images), each message becomes a conversation in your glbgpt.com history, and the website adds its own system prompt, so a message costs more than through the API. A model GlobalGPT later adds to the API automatically goes through the API again.
+
 ## Setup
 
 ### 1. Create a GlobalGPT API key
@@ -35,10 +37,23 @@ Worker → **Settings → Variables and Secrets** (the runtime section, *not* **
 |---|---|---|
 | `GLBGPT_API_KEY` | Secret | the API key from step 1 |
 | `CONNECTOR_SECRET` | Secret | a random string of at least 32 letters/digits only (if you put it in the URL, symbols like `/ # ? % +` break it) |
+| `GLBGPT_TOKEN` | Secret | optional: your GlobalGPT login token, for website-only chat models (see below) |
 | `DAILY_CREDIT_LIMIT` | Text | optional: most credits generations may spend per day, e.g. `20000`. Not set = no limit |
 | `DISABLE_URL_SECRET` | Text | optional: `true` = accept the secret only as a header, not in the URL (see step 4) |
 
 Changing `DAILY_CREDIT_LIMIT` in the dashboard applies as soon as you save and deploy it there; no Git push needed. The day resets at midnight Berlin time (`LIMIT_TIMEZONE` in `worker.js`). `0` blocks generation; a value that isn't a number also blocks it, so a typo never removes the limit by accident. Chat isn't counted. The counter uses what GlobalGPT actually reserves for each task, and a task that fails is taken off again (GlobalGPT releases its credits). `wrangler.toml` sets `keep_vars = true`, so Git deploys don't overwrite it.
+
+Getting `GLBGPT_TOKEN` (only for website-only chat models): on your computer (Node.js 18+) run `npx @glbgpt/cli login`, then copy the token from `~/.config/glbgpt/credentials.json` without showing it:
+
+```powershell
+(Get-Content "$HOME\.config\glbgpt\credentials.json" | ConvertFrom-Json).token | Set-Clipboard
+```
+```sh
+# macOS (use xclip/wl-copy instead of pbcopy on Linux)
+node -p "require(require('os').homedir()+'/.config/glbgpt/credentials.json').token" | pbcopy
+```
+
+Unlike the API key, this token can't be revoked from your side (logging out doesn't invalidate it) and can do whatever your login can, so leave it out if you don't need those models.
 
 Generating a secret (64 hex characters), with any of:
 
@@ -80,6 +95,7 @@ In Claude: **Settings → Connectors → Add custom connector**, enter the addre
 ## Troubleshooting
 - **`Not found` at the right address or with the right header:** open `https://<worker-name>.<your-subdomain>.workers.dev/health`. It shows which settings exist and their lengths (never values), whether the API key looks like one (`sk-glb-…`), the daily limit in effect, whether the KV namespace is bound, and the first 8 hex characters of the SHA-256 of `CONNECTOR_SECRET` to compare with your copy (PowerShell: `$h=[Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($secret)); -join ($h[0..3] | % { $_.ToString('x2') })`, or `printf %s "$SECRET" | sha256sum | cut -c1-8`). Everything `"set": false` means the variables were added under **Build**, or not deployed.
 - **"GlobalGPT rejected the API key":** the key was revoked or mistyped; create a new one and update `GLBGPT_API_KEY`.
+- **"GlobalGPT's website rejected the login token":** run `npx @glbgpt/cli login` again and update `GLBGPT_TOKEN`.
 - **"Daily limit reached":** raise `DAILY_CREDIT_LIMIT`, delete it for no limit, or wait until midnight.
 - **"the CREDITS KV namespace isn't bound":** see step 2, or delete `DAILY_CREDIT_LIMIT`.
 - **A model returns "not found":** GlobalGPT retired or renamed it; the message usually names the successor, and `glbgpt_list_models` shows the current list.

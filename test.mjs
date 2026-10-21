@@ -2,6 +2,7 @@
 import worker from './worker.js';
 const SECRET = 'x'.repeat(40);
 const KEY = 'sk-glb-testkey';
+const TOKEN = 'aaa.bbb.ccc';
 const base = 'https://glb.example.workers.dev';
 const API = 'https://api2.glbgpt.com/ai-api/open/v1';
 
@@ -17,18 +18,25 @@ const KV = { get: async (k) => kvStore.get(k) ?? null, put: async (k, v) => { kv
 // Fake GlobalGPT API
 const calls = [];
 const state = {};
-const defaults = { price: 200, reserved: undefined, polls: 0, pollsUntilDone: 0, fail: null, submitStatus: 200, submitNetErrors: 0, keyBad: false, chatJsonReject: false, estimateStatus: 200 };
+const defaults = { price: 200, reserved: undefined, polls: 0, pollsUntilDone: 0, fail: null, submitStatus: 200, submitNetErrors: 0, keyBad: false, chatJsonReject: false, estimateStatus: 200, webPay: false };
 const res = (status, d, headers = {}) => new Response(JSON.stringify(d), { status, headers: { 'Content-Type': 'application/json', ...headers } });
 const err = (status, code, message = code) => res(status, { error: { message, type: code, code } });
 globalThis.fetch = async (url, init = {}) => {
   const u = new URL(url);
   const body = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
   calls.push({ method: init.method, path: u.pathname.replace('/ai-api/open/v1', ''), search: u.search, headers: init.headers, body });
+  if (url === 'https://api2.glbgpt.com/ai-api/ai/agent/chatStream') {
+    if (init.headers?.Authorization !== `Bearer ${TOKEN}`) return res(200, { code: 401, message: 'token invalid' });
+    if (state.webPay) return res(200, { code: 402, message: 'pay', data: { subCode: 4010 } });
+    const sse = ['data:{"event":"message","answer":"O"}\n\n', 'data:{"event":"message","answer":body.json ? "{\\"a\\":" : "K"}\n\n'.replace('body.json ? "{\\"a\\":" : "K"', body.query.includes('JSON Schema') ? '"{\\"a\\":1}"' : '"K"'), 'data:{"event":"message_end","metadata":{"usage":{"prompt_tokens":7000,"completion_tokens":2}}}\n\n'];
+    if (body.query.includes('JSON Schema')) sse[0] = 'data:{"event":"message","answer":""}\n\n';
+    return new Response(new ReadableStream({ start(c) { for (const l of sse) c.enqueue(new TextEncoder().encode(l)); c.close(); } }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+  }
   if (!url.startsWith(API)) return err(404, 'wrong_host');
   if (state.keyBad || init.headers?.Authorization !== `Bearer ${KEY}`) return err(401, 'invalid_api_key');
   const p = u.pathname.replace('/ai-api/open/v1', '');
   if (p === '/models' && init.method === 'GET') return res(200, { object: 'list', data: [{ id: 'nano-banana-2.1', type: u.searchParams.get('type') || 'image', price: { '1K': 200 } }, { id: 'kling-v3', type: 'video' }] });
-  if (p.startsWith('/models/')) return p.endsWith('/nope') ? err(404, 'model_not_found', 'Unknown model nope') : res(200, { id: decodeURIComponent(p.slice(8)), parameters: { resolution: ['1K', '2K'] } });
+  if (p.startsWith('/models/')) return /\/(nope|claude-opus-5\.5)$/.test(p) ? err(404, 'model_not_found', 'Unknown model') : res(200, { id: decodeURIComponent(p.slice(8)), parameters: { resolution: ['1K', '2K'] } });
   if (p === '/tasks/estimate') {
     if (state.estimateStatus !== 200) return err(state.estimateStatus, state.estimateStatus === 402 ? 'insufficient_credit' : 'invalid_request', 'nope');
     return res(200, { credits: state.price, billing_model: `${body.model}-tier` });
@@ -48,6 +56,7 @@ globalThis.fetch = async (url, init = {}) => {
     return res(200, { id: p.slice(7), status: 'processing' });
   }
   if (p === '/chat/completions') {
+    if (['claude-opus-5.5', 'perplexity', 'sonar', 'made-up-model'].includes(body.model)) return err(404, 'model_not_found', `The model '${body.model}' does not exist or you do not have access to it.`);
     if (body.response_format && state.chatJsonReject) return err(400, 'upstream_rejected', 'json mode not supported');
     const content = body.response_format || /JSON Schema/.test(body.messages[0]?.content ?? '') ? '```json\n{"a":1}\n```' : 'Hello';
     return res(200, { id: 'c1', model: body.model, choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 2 } });
@@ -110,6 +119,45 @@ r = await tool(env(), 'glbgpt_chat', { prompt: 'hi' });
 check('bad API key -> clear message', r.err && r.text.includes('GLBGPT_API_KEY'));
 r = await tool(env({ GLBGPT_API_KEY: '' }), 'glbgpt_chat', { prompt: 'hi' });
 check('missing API key -> clear message', r.err && r.text.includes('is not set'));
+
+// website fallback for chat models the API doesn't have
+reset();
+const envT = (x = {}) => env({ GLBGPT_TOKEN: TOKEN, ...x });
+r = await tool(envT(), 'glbgpt_chat', { prompt: 'hi', system: 'be brief', model: 'claude-opus-5.5' });
+const web = calls.find((c) => c.path === '/ai-api/ai/agent/chatStream');
+check('API refuses -> website chat answers', !r.err && r.json.answer === 'OK' && r.json.via === 'website' && r.json.model === 'claude-opus-5.5');
+check('website call: agent 6242, token, system folded into the query', web.body.agentId === '6242' && web.headers.Authorization === `Bearer ${TOKEN}` && web.body.query === 'be brief\n\nhi' && web.body.enableSearch === false);
+check('website usage reported', r.json.usage.prompt_tokens === 7000);
+reset();
+r = await tool(envT(), 'glbgpt_chat', { prompt: 'search', model: 'sonar' });
+check('alias sonar -> perplexity (agent 4372)', !r.err && calls.find((c) => c.path === '/ai-api/ai/agent/chatStream').body.agentId === '4372');
+reset();
+r = await tool(envT(), 'glbgpt_chat', { prompt: 'json', model: 'claude-opus-5.5', response_schema: { type: 'object' } });
+check('website chat with schema -> parsed JSON', !r.err && r.json.a === 1);
+reset();
+r = await tool(envT(), 'glbgpt_chat', { prompt: 'hi', model: 'gpt-5.6-luna' });
+check('API models never go to the website', !r.err && !calls.some((c) => c.path === '/ai-api/ai/agent/chatStream'));
+reset();
+r = await tool(env(), 'glbgpt_chat', { prompt: 'hi', model: 'claude-opus-5.5' });
+check('website model without token -> asks for GLBGPT_TOKEN', r.err && r.text.includes('GLBGPT_TOKEN'));
+r = await tool(envT(), 'glbgpt_chat', { prompt: 'hi', model: 'made-up-model' });
+check('unknown everywhere -> the API error, no website call', r.err && r.text.includes('does not exist') && !calls.some((c) => c.path === '/ai-api/ai/agent/chatStream'));
+r = await tool(envT(), 'glbgpt_chat', { prompt: 'look', model: 'claude-opus-5.5', images: ['https://x.example/a.png'] });
+check('website model with images -> clear refusal', r.err && r.text.includes("can't attach images"));
+r = await tool(envT({ GLBGPT_TOKEN: 'wrong.wrong.wrong' }), 'glbgpt_chat', { prompt: 'hi', model: 'claude-opus-5.5' });
+check('bad token -> login hint', r.err && r.text.includes('glbgpt/cli login'));
+reset({ webPay: true });
+r = await tool(envT(), 'glbgpt_chat', { prompt: 'hi', model: 'claude-opus-5.5' });
+check('website plan refusal -> plan message', r.err && r.text.includes('Unlimited plan'));
+reset();
+r = await tool(envT(), 'glbgpt_list_models', { type: 'chat' });
+check('list models adds website-only chat models (with token)', !r.err && r.json.models.some((m) => m.id === 'claude-opus-5.5' && m.source === 'website') && r.json.models.filter((m) => m.id === 'nano-banana-2.1').length === 1);
+r = await tool(env(), 'glbgpt_list_models', { type: 'chat' });
+check('without token, no website models listed', !r.json.models.some((m) => m.source === 'website'));
+r = await tool(envT(), 'glbgpt_list_models', { type: 'video' });
+check('website models only in chat lists', !r.json.models.some((m) => m.source === 'website'));
+r = await tool(envT(), 'glbgpt_list_models', { model: 'claude-opus-5.5' });
+check('details for a website-only model', !r.err && r.json.source === 'website' && r.json.available === true);
 
 // generation
 reset();

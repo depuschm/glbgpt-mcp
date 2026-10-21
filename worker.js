@@ -1,8 +1,44 @@
 // glbgpt-mcp: a remote MCP server on Cloudflare Workers for your GlobalGPT account.
 // Same shape as discord-mcp: JSON-RPC over HTTP, secret in a header or the URL, /health.
 // Talks to GlobalGPT's official API (https://www.glbgpt.com/home/api/docs) with your API key.
+// Chat models the API doesn't offer fall back to the website's chat endpoint with your login token.
 
 const API = "https://api2.glbgpt.com/ai-api/open/v1";
+const WEB_CHAT = "https://api2.glbgpt.com/ai-api/ai/agent/chatStream";
+
+// The website's chat catalogue (model id -> agent id), read from glbgpt.com on 21 Oct 2026.
+// Only used when the API refuses a model, so a model GlobalGPT later adds to the API goes there again.
+const WEBSITE_CHAT_MODELS = {
+  "claude-opus-5.5": ["6242", "Claude Opus 5.5"], "claude-sonnet-5.5": ["6250", "Claude Sonnet 5.5"],
+  "claude-haiku-5.5": ["6253", "Claude Haiku 5.5"], "claude-fable-5.1": ["6225", "Claude Fable 5.1"],
+  "claude-fable-5": ["6171", "Claude Fable 5"], "claude-opus-5": ["6190", "Claude Opus 5"],
+  "claude-sonnet-5": ["6177", "Claude Sonnet 5"], "claude-opus-4.8": ["6170", "Claude Opus 4.8"],
+  "claude-opus-4.7": ["6158", "Claude Opus 4.7"], "claude-opus-4.6": ["6130", "Claude Opus 4.6"],
+  "claude-sonnet-4.6": ["6133", "Claude Sonnet 4.6"], "claude-opus-4.5": ["6108", "Claude Opus 4.5"],
+  "claude-sonnet-4.5": ["6086", "Claude Sonnet 4.5"], "claude-haiku-4.5": ["6089", "Claude Haiku 4.5"],
+  "gpt-6.1-sol": ["6251", "GPT-6.1 Sol"], "gpt-6-sol": ["6243", "GPT-6 Sol"], "gpt-6-luna": ["6244", "GPT-6 Luna"],
+  "gpt-6-astra": ["6228", "GPT-6 Astra"], "gpt-5.6-sol": ["6179", "GPT-5.6 Sol"], "gpt-5.6-terra": ["6180", "GPT-5.6 Terra"],
+  "gpt-5.6-luna": ["6181", "GPT-5.6 Luna"], "gpt-5.5": ["6161", "GPT-5.5"], "gpt-5.4": ["6139", "GPT-5.4"],
+  "gpt-5.4-mini": ["6150", "GPT-5.4 mini"], "gpt-5.4-nano": ["6151", "GPT-5.4 nano"], "gpt-5.3": ["6138", "GPT-5.3"],
+  "gpt-5.2": ["6112", "GPT-5.2"], "gpt-5.1": ["6103", "GPT-5.1"], "gpt-5": ["6068", "GPT-5"],
+  "gpt-5-mini": ["6069", "GPT-5 mini"], "gpt-5-nano": ["6070", "GPT-5 nano"], "gpt-4o": ["4108", "GPT-4o"],
+  "o1": ["4337", "o1"], "o3": ["6050", "o3"], "o3-mini": ["4339", "o3-mini"], "o3-mini-high": ["4356", "o3 Mini High"],
+  "o4-mini": ["4358", "o4 Mini"],
+  "gemini-4-argon": ["6259", "Gemini 4 Argon"], "gemini-3.8-flash": ["6227", "Gemini 3.8 Flash"],
+  "gemini-3.7-flash": ["6211", "Gemini 3.7 Flash"], "gemini-3.6-flash": ["6187", "Gemini 3.6 Flash"],
+  "gemini-3.5-flash": ["6169", "Gemini 3.5 Flash"], "gemini-3.5-flash-lite": ["6188", "Gemini 3.5 Flash Lite"],
+  "gemini-3.1-pro": ["6134", "Gemini 3.1 Pro"], "gemini-3.1-flash-lite": ["6137", "Gemini 3.1 Flash Lite"],
+  "gemini-3-pro": ["6104", "Gemini 3 Pro"], "gemini-3-flash": ["6113", "Gemini 3 Flash"],
+  "grok-4.7": ["6240", "Grok 4.7"], "grok-4.6": ["6209", "Grok 4.6"], "grok-4.3": ["6167", "Grok 4.3"],
+  "muse-wonder": ["6256", "Muse Wonder"], "muse-spark-1.3": ["6226", "Muse Spark 1.3"], "muse-spark-1.2": ["6203", "Muse Spark 1.2"],
+  "glm-5.3": ["6212", "GLM-5.3"], "glm-5.3-flash": ["6216", "GLM-5.3 Flash"], "glm-5.2": ["6186", "GLM-5.2"], "glm-5.1": ["6168", "GLM-5.1"],
+  "kimi-k3": ["6185", "Kimi K3"], "kimi-k2.6": ["6159", "Kimi K2.6"], "kimi-k2.5": ["6129", "Kimi K2.5"],
+  "deepseek-v4.1-flash": ["6235", "DeepSeek V4.1 Flash"], "deepseek-v4-pro": ["6163", "DeepSeek V4 Pro"],
+  "deepseek-v4-flash": ["6162", "DeepSeek V4 Flash"], "qwen3.8-max": ["6191", "Qwen3.8 Max"],
+  "qwen3.8-flash": ["6217", "Qwen3.8 Flash"], "agnes-2.5-flash": ["6237", "Agnes 2.5 Flash"],
+  "perplexity": ["4372", "Perplexity (search)"],
+};
+const WEBSITE_ALIASES = { sonar: "perplexity" };
 const UA = "glbgpt-mcp-worker/2.0 (cloudflare-workers)";
 const SERVER_INFO = { name: "glbgpt-mcp", version: "2.0.0" };
 const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
@@ -93,7 +129,12 @@ class GlobalGPT {
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch {}
-    if (!res.ok) throw new ToolError(apiError(res.status, data, res.headers.get("Retry-After")));
+    if (!res.ok) {
+      const err = new ToolError(apiError(res.status, data, res.headers.get("Retry-After")));
+      err.status = res.status;
+      err.code = data?.error?.code ?? data?.error?.type;
+      throw err;
+    }
     if (data === null) throw new ToolError(`GlobalGPT answered HTTP ${res.status} without JSON. Try again in a moment.`);
     return data;
   }
@@ -115,6 +156,82 @@ class GlobalGPT {
   }
   chat(body) { return this.request("POST", "/chat/completions", { ...body, stream: false }); }
 }
+
+// The website's own chat endpoint, signed with the GlobalGPT login token. It takes one query (no
+// system role or images) and streams the answer as SSE "message" events. Each call becomes a
+// conversation in the owner's chat history on glbgpt.com.
+async function websiteChat(env, agentId, query) {
+  if (!env.GLBGPT_TOKEN) throw new ToolError("This chat model is only on GlobalGPT's website, which needs GLBGPT_TOKEN (your login token) on the Worker.");
+  let res;
+  try {
+    res = await fetch(WEB_CHAT, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${env.GLBGPT_TOKEN}`, "Content-Type": "application/json", Accept: "text/event-stream", "User-Agent": UA },
+      body: JSON.stringify({
+        device: { deviceType: "pc" },
+        inputs: { thinking_patch: true, enableImages: false, deep_research: false, study: false, enableDeepThink: false },
+        enableSearch: false, agentId, query, conversationId: "", parentMessageId: "", files: [], chatTaskId: crypto.randomUUID(),
+      }),
+    });
+  } catch (e) {
+    throw new ToolError(`Couldn't reach GlobalGPT's website: ${e && e.message}`);
+  }
+  const ctype = res.headers.get("content-type") || "";
+  if (!ctype.includes("text/event-stream")) {
+    const text = await res.text();
+    let body = null;
+    try { body = JSON.parse(text); } catch {}
+    throw new ToolError(websiteError(res.status, body) ?? `GlobalGPT's website answered HTTP ${res.status}: ${(str(body?.message) ?? text).slice(0, 200)}`);
+  }
+  let answer = "", usage, buffer = "";
+  const decoder = new TextDecoder();
+  const handle = (line) => {
+    if (!line.startsWith("data:")) return;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") return;
+    let ev;
+    try { ev = JSON.parse(data); } catch { return; }
+    const err = websiteError(200, ev);
+    if (err) throw new ToolError(err);
+    if (ev.event === "message" || ev.event === "agent_message") answer += typeof ev.answer === "string" ? ev.answer : "";
+    if (ev.event === "message_end" && ev.metadata?.usage) usage = { prompt_tokens: ev.metadata.usage.prompt_tokens, completion_tokens: ev.metadata.usage.completion_tokens };
+    if (ev.event === "error") throw new ToolError(`The model reported an error: ${str(ev.message) ?? "unknown"}`);
+  };
+  for await (const bytes of res.body) {
+    buffer += decoder.decode(bytes, { stream: true });
+    let i;
+    while ((i = buffer.indexOf("\n")) >= 0) {
+      handle(buffer.slice(0, i).trim());
+      buffer = buffer.slice(i + 1);
+    }
+  }
+  handle(buffer.trim());
+  return { answer, usage };
+}
+
+// The website's business errors come as {code, message} (HTTP 200); null when the body is a normal event.
+function websiteError(status, body) {
+  const code = typeof body?.code === "number" ? body.code : status >= 400 ? status : null;
+  if (code === null || code === 1 || code === 200) return null;
+  if (code === 401 || code === 403) return "GlobalGPT's website rejected the login token (expired or wrong). Run `npx @glbgpt/cli login` again and update GLBGPT_TOKEN on the Worker.";
+  if (code === 402) return PAYMENT_MESSAGES[body?.data?.subCode] ?? (str(body?.message) || "The plan or credits don't cover this model.");
+  if (code === 429) return "GlobalGPT's website says too many requests; wait a moment and try again.";
+  return `GlobalGPT's website refused the chat (code ${code}${str(body?.message) ? `: ${body.message}` : ""}).`;
+}
+const PAYMENT_MESSAGES = {
+  4002: "Insufficient credit balance.",
+  4003: "The plan's credits for the current period are used up.",
+  4004: "The plan isn't active for this period yet.",
+  4009: "This model requires a PRO plan.",
+  4010: "This model requires an Unlimited plan.",
+};
+
+const websiteModel = (id) => {
+  const key = String(id || "").trim().toLowerCase();
+  const k = WEBSITE_ALIASES[key] ?? key;
+  return WEBSITE_CHAT_MODELS[k] ? { id: k, agentId: WEBSITE_CHAT_MODELS[k][0], name: WEBSITE_CHAT_MODELS[k][1] } : null;
+};
+const isModelMissing = (e) => e instanceof ToolError && e.status === 404;
 
 // ---------------------------------------------------------------------------
 // Daily credit limit (KV counter per day in LIMIT_TIMEZONE)
@@ -192,7 +309,7 @@ const TOOLS = [
   {
     name: "glbgpt_chat",
     title: "GlobalGPT chat",
-    description: "Ask one of GlobalGPT's chat models a single question and get the answer. Optionally set a system prompt, choose a model, attach images for the model to see, or pass a JSON Schema (response_schema) to get JSON back. glbgpt_list_models with type chat lists the models and their prices.",
+    description: "Ask one of GlobalGPT's chat models a single question and get the answer. Optionally set a system prompt, choose a model, attach images for the model to see, or pass a JSON Schema (response_schema) to get JSON back. glbgpt_list_models with type chat lists the models and their prices; models marked source 'website' work too, but without images.",
     inputSchema: {
       type: "object",
       properties: {
@@ -395,15 +512,27 @@ const handlers = {
     const model = str(a.model) ?? DEFAULT_CHAT_MODEL;
     const req = { model, messages, ...(a.reasoning_effort ? { reasoning_effort: a.reasoning_effort } : {}) };
     let res;
-    if (schema) {
-      // JSON mode where the model supports it; otherwise the instruction in the system prompt carries it.
-      try {
-        res = await g.chat({ ...req, response_format: { type: "json_object" } });
-      } catch (e) {
-        if (!/error 400|provider/i.test(e.message)) throw e;
-        res = await g.chat(req);
-      }
-    } else res = await g.chat(req);
+    try {
+      if (schema) {
+        // JSON mode where the model supports it; otherwise the instruction in the system prompt carries it.
+        try {
+          res = await g.chat({ ...req, response_format: { type: "json_object" } });
+        } catch (e) {
+          if (isModelMissing(e) || !/error 400|provider/i.test(e.message)) throw e;
+          res = await g.chat(req);
+        }
+      } else res = await g.chat(req);
+    } catch (e) {
+      const web = isModelMissing(e) ? websiteModel(model) : null;
+      if (!web) throw e;
+      // Not in the API, but on the website: same question through the website's chat.
+      if (images.length) throw new ToolError(`${web.name} is only on GlobalGPT's website, where this connector can't attach images. Ask without images, or pick an API model (glbgpt_list_models).`);
+      const query = [system, prompt].filter(Boolean).join("\n\n");
+      const out = await websiteChat(ctx.env, web.agentId, query);
+      if (schema) return parseJsonAnswer(out.answer);
+      if (!out.answer) throw new ToolError(`${web.name} returned an empty answer. Try again.`);
+      return { model: web.id, answer: out.answer, via: "website", ...(out.usage ? { usage: out.usage } : {}) };
+    }
     const answer = res?.choices?.[0]?.message?.content ?? "";
     const usage = res?.usage ? { prompt_tokens: res.usage.prompt_tokens, completion_tokens: res.usage.completion_tokens } : undefined;
     if (schema) return parseJsonAnswer(answer);
@@ -418,8 +547,24 @@ const handlers = {
   },
   async glbgpt_list_models(ctx, a) {
     const g = new GlobalGPT(ctx.env);
-    if (str(a.model)) return g.model(str(a.model));
+    const websiteEntry = (w) => ({
+      id: w.id, type: "chat", source: "website", description: `${w.name} (only on GlobalGPT's website: text in, text out, no images; each chat shows up in the owner's glbgpt.com history)`,
+    });
+    if (str(a.model)) {
+      try {
+        return await g.model(str(a.model));
+      } catch (e) {
+        const w = isModelMissing(e) ? websiteModel(a.model) : null;
+        if (!w) throw e;
+        return { ...websiteEntry(w), available: !!ctx.env.GLBGPT_TOKEN };
+      }
+    }
     const models = list(await g.models(a.type));
+    // Chat models the API doesn't list but the website has, when the login token is set.
+    if (ctx.env.GLBGPT_TOKEN && (!a.type || a.type === "chat")) {
+      const have = new Set(models.map((m) => String(m.id).toLowerCase()));
+      for (const id of Object.keys(WEBSITE_CHAT_MODELS)) if (!have.has(id)) models.push(websiteEntry(websiteModel(id)));
+    }
     return { count: models.length, models };
   },
   async glbgpt_usage(ctx, a) {
@@ -530,6 +675,7 @@ async function handleHealth(env) {
       sha256_first8: secret ? await fp(secret) : null,
     },
     GLBGPT_API_KEY: { ...info(env.GLBGPT_API_KEY), looks_right: !!env.GLBGPT_API_KEY && env.GLBGPT_API_KEY.startsWith("sk-glb-") },
+    GLBGPT_TOKEN: { ...info(env.GLBGPT_TOKEN), used_for: "website-only chat models", looks_like_jwt: !!env.GLBGPT_TOKEN && env.GLBGPT_TOKEN.split(".").length === 3 },
     DAILY_CREDIT_LIMIT: invalid !== undefined ? "invalid (not a number): generation blocked" : limit === null ? "not set: no limit" : limit,
     CREDITS_kv_bound: !!env.CREDITS,
     secret_in_url: urlSecretDisabled(env) ? "disabled" : "enabled",
@@ -543,6 +689,7 @@ export default {
       ...rawEnv,
       CONNECTOR_SECRET: clean(rawEnv.CONNECTOR_SECRET),
       GLBGPT_API_KEY: clean(rawEnv.GLBGPT_API_KEY)?.replace(/^Bearer\s+/i, "").replace(/^"|"$/g, ""),
+      GLBGPT_TOKEN: clean(rawEnv.GLBGPT_TOKEN)?.replace(/^Bearer\s+/i, "").replace(/^"|"$/g, ""),
     };
     const url = new URL(request.url);
     if (url.pathname === "/health" && request.method === "GET") return handleHealth(env);
