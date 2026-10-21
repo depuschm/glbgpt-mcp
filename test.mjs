@@ -448,5 +448,12 @@ r = await tool(envT(), 'glbgpt_usage', { recent: 3 });
 const cr = r.json.credit_records;
 check('usage: credit records with list price and income', !r.err && cr[0].what === 'AI Video Detector' && cr[0].credits === 0 && cr[0].list_price === 20 && cr[1].credits === 130);
 
+reset();
+r = await tool(envT({ DAILY_CREDIT_LIMIT: '5000' }), 'glbgpt_generate', { model: 'ai-image-detector', images: ['https://cdn.example/mine.png'] });
+check('detector run counted against the daily limit (20)', !r.err && kvStore.get(spentKey) === '20');
+reset();
+r = await tool(envT({ DAILY_CREDIT_LIMIT: '10' }), 'glbgpt_generate', { model: 'ai-image-detector', images: ['https://cdn.example/mine.png'] });
+check('detector refused when over the daily limit', r.err && r.text.includes('Daily limit') && !calls.some((c) => c.path === '/ai-api/ai/detector/analyze'));
+
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

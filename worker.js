@@ -667,7 +667,7 @@ async function listAssets(env, mediaType, source, size = 50) {
 // A frame of a video on GlobalGPT's CDN, cut by Cloudflare (the website's own preview trick).
 const cdnFrameUrl = (videoUrl, ms) => `https://static.futureshareai.com/cdn-cgi/media/mode=frame,time=${Math.max(0, ms) / 1000}s,duration=1s,fit=contain,format=png/${videoUrl}`;
 
-async function runDetector(env, w, a) {
+async function runDetector(env, w, a, limit) {
   if (!env.GLBGPT_TOKEN) throw new ToolError(`${w.name} is only on GlobalGPT's website, which needs GLBGPT_TOKEN (your login token) on the Worker.`);
   const video = w.detector === "VIDEO";
   const mediaType = video ? 2 : 1;
@@ -696,15 +696,24 @@ async function runDetector(env, w, a) {
     const blob = await loadMedia(frameSrc, 20 * 1024 * 1024, "video frame");
     frame = { frameFileKey: await webUpload(env, "/ai-api/ai/detector/frame/upload", blob, `detector-frame-${frameMs}.png`), frameTimestampMs: frameMs };
   }
-  const r = await webRequest(env, "POST", `${WEB}/ai-api/ai/detector/analyze`, defined({
-    productNo: "glbgpt", agentId: w.agentId, mediaId: asset.id, mediaSource: asset.source, mediaType: w.detector,
-    durationSeconds: video ? Math.ceil(secs0) : undefined, ...frame,
-  }));
+  // Counted against the daily limit like any other generation; given back if the analysis fails.
+  const price = Number(w.credits(a)) || 0;
+  const reserved = limit ? await limit.reserve(price) : 0;
+  let r;
+  try {
+    r = await webRequest(env, "POST", `${WEB}/ai-api/ai/detector/analyze`, defined({
+      productNo: "glbgpt", agentId: w.agentId, mediaId: asset.id, mediaSource: asset.source, mediaType: w.detector,
+      durationSeconds: video ? Math.ceil(secs0) : undefined, ...frame,
+    }));
+  } catch (e) {
+    if (reserved) await limit.add(-reserved).catch(() => {});
+    throw e;
+  }
   const d = r?.data && typeof r.data === "object" && !Array.isArray(r.data) ? r.data : r;
   const score = (m) => (m && typeof m === "object" ? (typeof m.score === "number" ? m.score : null) : typeof m === "number" ? m : null);
   const { code, message, ...rest } = d || {};
   return defined({
-    status: "succeeded", via: "website", model: w.id, type: "analysis", credits_estimated: 20,
+    status: "succeeded", via: "website", model: w.id, type: "analysis", credits_estimated: price,
     ai_generated: score(d?.aiGenerated), deepfake: score(d?.deepfake), summary: str(d?.summary),
     ...(video ? { frame_ms: frame.frameTimestampMs } : {}),
     media_id: asset.id, details: rest,
@@ -1064,7 +1073,7 @@ async function generate(ctx, a) {
     // Not in the API, but on the website: submit it there instead.
     const w = isModelMissing(e) ? websiteMedia(body.model) : null;
     if (!w) throw e;
-    if (w.detector) return await runDetector(ctx.env, w, body);
+    if (w.detector) return await runDetector(ctx.env, w, body, limit);
     const { taskId, credits } = await websiteGenerate(ctx, w, body, limit);
     const result = await waitForWebTask(ctx.env, limit, taskId, Date.now() + WAIT_MS);
     return { ...result, model: w.id, credits_estimated: credits, ...(APPROX_PRICE.has(w.id) ? { price_note: "estimated from the website's list price; GlobalGPT bills the exact amount" } : {}) };
