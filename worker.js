@@ -183,14 +183,17 @@ async function websiteChat(env, agentId, query) {
     try { body = JSON.parse(text); } catch {}
     throw new ToolError(websiteError(res.status, body) ?? `GlobalGPT's website answered HTTP ${res.status}: ${(str(body?.message) ?? text).slice(0, 200)}`);
   }
-  let answer = "", usage, buffer = "";
+  let answer = "", usage, buffer = "", raw = "";
+  const seen = new Set();
   const decoder = new TextDecoder();
   const handle = (line) => {
+    if (raw.length < 1500 && line) raw += line.slice(0, 300) + "\n";
     if (!line.startsWith("data:")) return;
     const data = line.slice(5).trim();
     if (!data || data === "[DONE]") return;
     let ev;
     try { ev = JSON.parse(data); } catch { return; }
+    seen.add(String(ev.event ?? ev.type ?? "?"));
     const err = websiteError(200, ev);
     if (err) throw new ToolError(err);
     if (ev.event === "message" || ev.event === "agent_message") answer += typeof ev.answer === "string" ? ev.answer : "";
@@ -206,7 +209,7 @@ async function websiteChat(env, agentId, query) {
     }
   }
   handle(buffer.trim());
-  return { answer, usage };
+  return { answer, usage, debug: answer ? undefined : { events: [...seen], start: raw.slice(0, 1200) } };
 }
 
 // The website's business errors come as {code, message} (HTTP 200); null when the body is a normal event.
@@ -530,7 +533,7 @@ const handlers = {
       const query = [system, prompt].filter(Boolean).join("\n\n");
       const out = await websiteChat(ctx.env, web.agentId, query);
       if (schema) return parseJsonAnswer(out.answer);
-      if (!out.answer) throw new ToolError(`${web.name} returned an empty answer. Try again.`);
+      if (!out.answer) throw new ToolError(`${web.name} returned an empty answer. Events received: ${JSON.stringify(out.debug)}`);
       return { model: web.id, answer: out.answer, via: "website", ...(out.usage ? { usage: out.usage } : {}) };
     }
     const answer = res?.choices?.[0]?.message?.content ?? "";
