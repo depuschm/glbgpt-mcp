@@ -221,7 +221,7 @@ function websiteError(status, body) {
   if (code === 401 || code === 403) return "GlobalGPT's website rejected the login token (expired or wrong). Run `npx @glbgpt/cli login` again and update GLBGPT_TOKEN on the Worker.";
   if (code === 402) return PAYMENT_MESSAGES[body?.data?.subCode] ?? (str(body?.message) || "The plan or credits don't cover this model.");
   if (code === 429) return "GlobalGPT's website says too many requests; wait a moment and try again.";
-  return `GlobalGPT's website refused the chat (code ${code}${str(body?.message) ? `: ${body.message}` : ""}).`;
+  return `GlobalGPT's website refused the request (code ${code}${str(body?.message) ? `: ${body.message}` : ""}).`;
 }
 const PAYMENT_MESSAGES = {
   4002: "Insufficient credit balance.",
@@ -250,6 +250,76 @@ const meta = (a) => (a.metadata && typeof a.metadata === "object" ? a.metadata :
 const secs = (a, d) => (Number.isInteger(a.duration) && a.duration > 0 ? a.duration : d);
 const perSecond = (rate, d) => (a) => Math.round(rate * secs(a, d));
 const resOf = (a, d) => String(a.resolution || d);
+// Any metadata key is passed on to the website's request, so every field its own form sends can be set.
+// Fields the connector sets itself (routing, billing, the enhance toggle) can't be overridden this way.
+const PASS_RESERVED = new Set(["agentId", "productNo", "shareStatus", "enhancePrompt", "enhance_prompt"]);
+const extras = (a) => Object.fromEntries(Object.entries(meta(a)).filter(([k, v]) => !PASS_RESERVED.has(k) && v !== undefined && v !== null));
+const defined = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+const enhanceOf = (a) => meta(a).enhancePrompt === true || meta(a).enhance_prompt === true;
+const oneOf = (name, what, value, allowed) => {
+  if (!allowed.map(String).includes(String(value))) throw new ToolError(`${name} takes ${what} ${allowed.join(", ")} (got ${value}).`);
+  return value;
+};
+// AI Poster / Product Images: text blocks are {text, position}; position is top, middle or bottom.
+const POSITIONS = ["top", "middle", "bottom"];
+function posterTextBlocks(list) {
+  const raw = (Array.isArray(list) ? list : list ? [list] : []).filter((b) => b !== "" && b != null);
+  if (raw.length > 3) throw new ToolError("AI Poster takes at most 3 text blocks.");
+  const defaults = [["top"], ["top", "bottom"], ["top", "middle", "bottom"]][Math.max(0, raw.length - 1)];
+  const blocks = raw.map((b, i) => {
+    const text = typeof b === "string" ? str(b) : str(b?.text);
+    const position = (typeof b === "object" && str(b?.position)) || defaults[i];
+    if (!text) throw new ToolError("Each AI Poster text block needs text.");
+    oneOf("AI Poster", "text positions", position, POSITIONS);
+    return { text, position };
+  });
+  const per = blocks.reduce((m, b) => ({ ...m, [b.position]: (m[b.position] || 0) + 1 }), {});
+  if (Object.values(per).some((n) => n > 2)) throw new ToolError("AI Poster takes at most 2 text blocks per position.");
+  if (blocks.length === 3 && Object.keys(per).length < 2) throw new ToolError("With 3 AI Poster text blocks, use at least 2 different positions.");
+  return blocks;
+}
+// Wan 2.6 takes a pixel size, not a ratio; the website picks it from the ratio and resolution.
+const WAN26_SIZES = { "720P": { "16:9": "1280*720", "9:16": "720*1280" }, "1080P": { "16:9": "1920*1080", "9:16": "1080*1920" } };
+function wan26Size(a) {
+  const ratio = String(a.aspect_ratio || "16:9");
+  if (/^\d+\*\d+$/.test(ratio)) return ratio;
+  const size = WAN26_SIZES[resOf(a, "720P").toUpperCase()]?.[ratio];
+  if (!size) throw new ToolError("Wan 2.6 takes aspect_ratio 16:9 or 9:16 at resolution 720P or 1080P (or a size like 1280*720).");
+  return size;
+}
+// Midjourney: version and aspect go in their own fields; the website strips them from the prompt.
+function mjPrompt(a) {
+  let prompt = String(a.prompt || "");
+  const take = (flag) => {
+    const m = prompt.match(new RegExp(`--${flag}\\s+(\\S+)`));
+    prompt = prompt.replace(new RegExp(`--${flag}\\s+\\S+`, "g"), "").replace(/\s{2,}/g, " ").trim();
+    return m?.[1];
+  };
+  const version = String(meta(a).version || take("v") || "8.2");
+  take("v");
+  const aspect = a.aspect_ratio || take("ar") || "1:1";
+  take("ar");
+  if (["8", "8.2"].includes(version)) prompt = `${prompt.replace(/--hd\b/gi, "").replace(/\s{2,}/g, " ").trim()} --hd`;
+  return { prompt, version, aspect };
+}
+// 3D prices that depend on the options (the website's own formula, in credits).
+function meshyCredits(a) {
+  const m = meta(a);
+  let c = m.shouldTexture === false ? 1760 : m.ultraMode ? 3080 : 2640;
+  if (m.enableRigging) c += 440;
+  if (m.enableRigging && m.enableAnimation) c += 270;
+  return c;
+}
+function tripoCredits(a) {
+  const m = meta(a);
+  const text = first(a).length === 0;
+  const tier = m.texture === false ? "none" : m.textureQuality === "detailed" ? "detailed" : "standard";
+  const mult = { none: [1, 1], standard: [2, 1.5], detailed: [3, 2] }[tier][text ? 0 : 1];
+  let usd = Math.round(100 * (text ? 0.33 : 0.67) * mult) / 100;
+  if (m.geometryQuality === "detailed") usd += 0.67;
+  if (m.quad) usd += 0.17;
+  return Math.round(1000 * Math.round(100 * usd) / 100);
+}
 
 const hidream = (agentId, model, name, credits, { edit = false, noImages = false } = {}) => ({
   name, type: "image", agentId, path: "/ai-api/ai/hidream/task/submit", credits: () => credits,
@@ -257,7 +327,12 @@ const hidream = (agentId, model, name, credits, { edit = false, noImages = false
 });
 const ideogram3 = (agentId, model, name, credits) => ({
   name, type: "image", agentId, path: "/ai-api/ai/ideogram3/task/submit", credits: () => credits,
-  body: (a) => ({ image_request: { aspect_ratio: a.aspect_ratio || "1:1", prompt: a.prompt, model, style_type: meta(a).style_type || "AUTO", negative_prompt: a.negative_prompt || "" } }),
+  wrap: "image_request",
+  // Like the website: a style preset goes with style_type AUTO.
+  body: (a) => {
+    const m = meta(a);
+    return { image_request: { aspect_ratio: a.aspect_ratio || "1:1", prompt: a.prompt, model, style_type: m.style_preset ? "AUTO" : m.style_type || "AUTO", ...(m.style_preset ? { style_preset: m.style_preset } : {}), negative_prompt: a.negative_prompt || "" } };
+  },
 });
 const anywhere = (agentId, model, name, maxImages, credits) => ({
   name, type: "image", agentId, path: "/ai-api/ai/anywhere-image/task/submit", credits,
@@ -280,15 +355,22 @@ const videoTool = (agentId, model, name, rate, { image = false, maxSeconds } = {
     if (!image && !secs(a, 0)) throw new ToolError(`${name} needs duration: the input video's length in seconds (it sets the price).`);
     if (maxSeconds && secs(a, 0) > maxSeconds) throw new ToolError(`${name} takes videos up to ${maxSeconds} seconds.`);
     if (image && !first(a)[0]) throw new ToolError(`${name} needs one portrait in images and the script as prompt.`);
-    return {
-      model, ...(image ? { image: first(a)[0] } : { video: a.video_url, durationSeconds: secs(a, 0) }),
-      resolution: a.resolution, aspectRatio: a.aspect_ratio, prompt: model === "video-translate" ? `Translate to ${m.outputLanguage || "English"}` : a.prompt,
-      voice: m.voice, voiceLanguage: m.voiceLanguage, voicePrompt: m.voicePrompt, outputLanguage: m.outputLanguage,
-    };
+    if (model === "video-sound-fx" && String(a.prompt || "").length > 50) throw new ToolError("Video Sound takes a prompt of up to 50 characters.");
+    if (model === "talking-photo" && String(a.prompt || "").length > 1000) throw new ToolError("Talking Photo takes a script of up to 1,000 characters.");
+    // As on the website: resolution only where it's chosen, a prompt only for sound, reframe and talking photo.
+    const res = typeof rate === "number" ? undefined : String(a.resolution || Object.keys(rate)[0]).toLowerCase();
+    return defined({
+      model, ...(image ? { image: first(a)[0] } : { video: a.video_url, durationSeconds: Math.ceil(secs(a, 0)) }),
+      resolution: res, aspectRatio: model === "video-expand" ? a.aspect_ratio : undefined,
+      prompt: model === "video-translate" || model === "video-upscale" ? undefined : str(a.prompt),
+      voice: image ? m.voice : undefined, voiceLanguage: image ? m.voiceLanguage : undefined,
+      voicePrompt: image ? str(m.voicePrompt) || "Say the following." : undefined,
+      outputLanguage: model === "video-translate" ? m.outputLanguage || "English" : undefined,
+    });
   },
 });
 const threeD = (agentId, model, name, credits, { imagesRequired = false, maxImages = 4, noPrompt = false } = {}) => ({
-  name, type: "3d", agentId, path: "/ai-api/ai/3d/task/submit", credits: () => credits,
+  name, type: "3d", agentId, path: "/ai-api/ai/3d/task/submit", credits: typeof credits === "function" ? credits : () => credits,
   body: (a) => {
     const images = first(a).slice(0, maxImages);
     if (imagesRequired && !images.length) throw new ToolError(`${name} needs at least one image.`);
@@ -300,7 +382,7 @@ const threeD = (agentId, model, name, credits, { imagesRequired = false, maxImag
 const WEBSITE_MEDIA_MODELS = {
   // images
   "ideogram-4.5": {
-    name: "Ideogram 4.5", type: "image", agentId: "6318", path: "/ai-api/ai/ideogram3/task/submit",
+    name: "Ideogram 4.5", type: "image", agentId: "6318", path: "/ai-api/ai/ideogram3/task/submit", wrap: "image_request",
     credits: (a) => ({ high: first(a).length ? 730 : 330, medium: 200, low: 100, very_low: 27 })[meta(a).quality || "high"] ?? 330,
     body: (a) => {
       const quality = meta(a).quality || "high";
@@ -328,22 +410,27 @@ const WEBSITE_MEDIA_MODELS = {
   "hidream-i1-full": hidream("6246", "hidream-i1-full", "HiDream I1 Full", 80, { noImages: true }),
   "hidream-i1-dev": hidream("6245", "hidream-i1-dev", "HiDream I1 Dev", 40, { noImages: true }),
   "midjourney": {
-    name: "Midjourney", type: "image", agentId: 4115, path: "/ai-api/ai/zeakai/mj/submit/imagine", credits: () => 100,
+    name: "Midjourney", type: "image", agentId: 4115, path: "/ai-api/ai/zeakai/mj/submit/imagine", credits: () => 100, wrap: "image_request",
     body: (a) => {
       const m = meta(a);
-      const req = { prompt: a.prompt, aspect: a.aspect_ratio, style: m.style, view: m.view, characterShot: m.characterShot, lighting: m.lighting, imageQuality: m.imageQuality, artisticLevel: m.artisticLevel, version: m.version, cw: m.cw, sref: m.sref, cref: m.cref, model: "mj-zeakai-imagine" };
-      return { image_request: Object.fromEntries(Object.entries(req).filter(([, v]) => v !== undefined && v !== null && v !== "")), fileList: [], conversationId: "" };
+      const { prompt, version, aspect } = mjPrompt(a);
+      oneOf("Midjourney", "aspect ratios", aspect, ["1:1", "4:3", "3:4", "16:9", "9:16"]);
+      const images = first(a).slice(0, 5);
+      const req = { prompt, aspect, base64Array: images, style: m.style, view: m.view, characterShot: m.characterShot, lighting: m.lighting, imageQuality: m.imageQuality, artisticLevel: m.artisticLevel, version, cw: m.cw, sref: m.sref, cref: m.cref, model: "mj-zeakai-imagine" };
+      return { image_request: Object.fromEntries(Object.entries(req).filter(([, v]) => v !== undefined && v !== null && v !== "")), fileList: images, conversationId: "" };
     },
   },
   "ai-poster": {
     name: "AI Poster", type: "image", agentId: "6140", path: "/ai-api/ai/tools/poster/generate", credits: () => 400,
-    body: (a) => ({ prompt: a.prompt, aspectRatio: a.aspect_ratio || "3:4", textBlocks: meta(a).textBlocks || [], usageContext: meta(a).usageContext || "" }),
+    body: (a) => ({ prompt: a.prompt, aspectRatio: a.aspect_ratio || "1:1", textBlocks: posterTextBlocks(meta(a).textBlocks), usageContext: meta(a).usageContext || "" }),
   },
   "ai-product-images": {
     name: "AI Product Images", type: "image", agentId: "6141", path: "/ai-api/ai/tools/product-images/generate", credits: () => 400,
     body: (a) => {
       if (!first(a)[0]) throw new ToolError("AI Product Images needs the product photo in images.");
-      return { referenceImageUrl: first(a)[0], aspectRatio: a.aspect_ratio || "1:1", usageContext: meta(a).usageContext || "", prompt: a.prompt, text: meta(a).text || "", textPosition: meta(a).textPosition || "" };
+      const text = str(meta(a).text) || "";
+      const textPosition = text ? oneOf("AI Product Images", "textPosition", meta(a).textPosition || "bottom", POSITIONS) : "";
+      return { referenceImageUrl: first(a)[0], aspectRatio: a.aspect_ratio || "1:1", usageContext: meta(a).usageContext || "", prompt: a.prompt, text, textPosition };
     },
   },
   // videos
@@ -353,19 +440,32 @@ const WEBSITE_MEDIA_MODELS = {
   },
   "kling-o1": {
     name: "Kling O1", type: "video", agentId: "6157", path: "/ai-api/ai/klingO1/task/submit", credits: perSecond(200, 5),
+    // A new video is 5 or 10 s; editing a video keeps its length (3-10 s).
     body: (a) => ({
-      model: "kling-video-o1", prompt: String(a.prompt || "").replace(/@Image(\d+)/g, "<<<image_$1>>>"), resolution: a.resolution || "720p", duration: secs(a, 5), aspect_ratio: a.aspect_ratio || "16:9",
-      ...(first(a).length ? { imageUrls: JSON.stringify(first(a).slice(0, 2)) } : {}),
+      model: "kling-video-o1", prompt: String(a.prompt || "").replace(/@(Video|Audio)\d+\s?/g, "").replace(/@Image(\d+)/g, "<<<image_$1>>>").replace(/\s+/g, " ").trim(), resolution: a.resolution || "720p",
+      duration: a.video_url ? Math.min(10, Math.max(3, Math.ceil(secs(a, 5)))) : Number(oneOf("Kling O1", "duration", secs(a, 5), [5, 10])), aspect_ratio: a.aspect_ratio || "16:9",
+      ...(first(a).length && !a.video_url ? { imageUrls: JSON.stringify(first(a).slice(0, 2)) } : {}),
       ...(a.video_url ? { videoList: JSON.stringify([{ video_url: a.video_url, refer_type: "base", keep_original_sound: "yes" }]) } : {}), hidePrompt: 0,
     }),
   },
   "wan3.0-video-prime": {
     name: "Wan 3.0 Prime", type: "video", agentId: "6215", path: "/ai-api/ai/wan30/task/submit", credits: perSecond(160, 5),
-    body: (a) => ({ model: "wan3.0-video-prime", prompt: a.prompt, duration: secs(a, 5), resolution: a.resolution || "720P", ratio: a.aspect_ratio || "adaptive", ...(first(a).length ? { images: first(a).slice(0, 2) } : {}), generateAudio: !!a.audio, hidePrompt: 0 }),
+    body: (a) => {
+      const d = secs(a, 5);
+      if (d < 2 || d > 30) throw new ToolError("Wan 3.0 Prime takes 2 to 30 seconds.");
+      return { model: "wan3.0-video-prime", prompt: a.prompt, duration: d, resolution: a.resolution || "720P", ratio: a.aspect_ratio || "adaptive", ...(first(a).length ? { images: first(a).slice(0, 2) } : {}), generateAudio: !!a.audio, hidePrompt: 0 };
+    },
   },
   "wan-2.7": {
     name: "Wan 2.7", type: "video", agentId: "6165", path: "/ai-api/ai/ali-wan/27/task/submit", credits: perSecond(200, 5),
-    body: (a) => ({ model: "wan-2.7", prompt: a.prompt, resolution: a.resolution || "720P", ratio: a.aspect_ratio || "16:9", duration: secs(a, 5), ...(first(a).length ? { keyframes: first(a).slice(0, 2) } : {}), hidePrompt: 0 }),
+    // images are first/last frame; with video_url (or metadata.references) they become references instead.
+    body: (a) => {
+      const d = secs(a, 5);
+      if (d < 2 || d > 15) throw new ToolError("Wan 2.7 takes 2 to 15 seconds.");
+      const refs = Array.isArray(meta(a).references) ? meta(a).references
+        : a.video_url ? [...first(a).slice(0, 4).map((url) => ({ type: "reference_image", url })), { type: "reference_video", url: a.video_url }] : null;
+      return { model: "wan-2.7", prompt: a.prompt, resolution: a.resolution || "720P", ratio: a.aspect_ratio || "16:9", duration: d, ...(refs ? { references: refs } : first(a).length ? { keyframes: first(a).slice(0, 2) } : {}), hidePrompt: 0 };
+    },
   },
   "wan-2.6": {
     name: "Wan 2.6", type: "video", agentId: "6118", credits: perSecond(200, 5),
@@ -373,13 +473,14 @@ const WEBSITE_MEDIA_MODELS = {
     path: (a) => `/ai-api/ai/ali-wan26/${WEBSITE_MEDIA_MODELS["wan-2.6"].route(a)[2]}/task/submit`,
     body: (a) => {
       const [agentId, model] = WEBSITE_MEDIA_MODELS["wan-2.6"].route(a);
-      return { agentId, model, prompt: a.prompt, image: first(a)[0] || "", reference_video_urls: a.video_url ? [a.video_url] : null, duration: secs(a, 5), size: a.aspect_ratio || "16:9", resolution: a.resolution || "720P", shot_type: meta(a).shot_type || "single", hidePrompt: 0 };
+      const duration = Number(oneOf("Wan 2.6", "duration", secs(a, 5), a.video_url ? [5, 10] : [5, 10, 15]));
+      return { agentId, model, prompt: a.prompt, image: first(a)[0] || "", reference_video_urls: a.video_url ? [a.video_url] : null, duration, size: wan26Size(a), resolution: resOf(a, "720P").toUpperCase(), shot_type: meta(a).shot_type || "single", hidePrompt: 0 };
     },
   },
   "seedance-1.0-pro": {
     name: "Seedance 1.0 Pro", type: "video", agentId: "6022", credits: perSecond(400, 5),
     path: (a) => `/ai-api/ai/wavespeed/seedance-${first(a).length ? "i2v" : "t2v"}/task/submit`,
-    body: (a) => ({ agentId: first(a).length ? "6020" : "6022", model: first(a).length ? "seedance-v1-pro-i2v-1080p" : "seedance-v1-pro-t2v-1080p", prompt: a.prompt, aspectRatio: a.aspect_ratio || "16:9", duration: secs(a, 5), image: first(a)[0] }),
+    body: (a) => ({ agentId: first(a).length ? "6020" : "6022", model: first(a).length ? "seedance-v1-pro-i2v-1080p" : "seedance-v1-pro-t2v-1080p", prompt: a.prompt, aspectRatio: a.aspect_ratio || "16:9", duration: Number(oneOf("Seedance 1.0 Pro", "duration", secs(a, 5), [5, 10])), image: first(a)[0] }),
   },
   "heygen-video": { name: "HeyGen Video (avatar)", type: "video", agentId: "6241", heygen: true },
   // video tools
@@ -390,8 +491,8 @@ const WEBSITE_MEDIA_MODELS = {
   "video-translate": videoTool("6224", "video-translate", "Video Translator", 0.222, { maxSeconds: 900 }),
   // 3D
   "hunyuan-3d-3.1": threeD("6231", "hunyuan3d-v3.1", "Hunyuan 3D 3.1", 100, { maxImages: 1 }),
-  "tripo-h3.1": threeD("6233", "tripo-h3.1", "Tripo h3.1", 330),
-  "meshy-7": threeD("6232", "meshy-v7", "Meshy 7", 1760),
+  "tripo-h3.1": threeD("6233", "tripo-h3.1", "Tripo h3.1", tripoCredits),
+  "meshy-7": threeD("6232", "meshy-v7", "Meshy 7", meshyCredits),
   "trellis-3d": threeD("6229", "trellis-3d", "TRELLIS 3D", 500, { imagesRequired: true, maxImages: 5, noPrompt: true }),
   "rodin-gen-2": threeD("6230", "rodin-gen2", "Rodin Gen-2", 1400, { maxImages: 5 }),
   // speech to text
@@ -408,34 +509,35 @@ const WEBSITE_MEDIA_MODELS = {
 };
 // How to call each website-only media model (shown by glbgpt_list_models).
 const WEBSITE_MEDIA_HINTS = {
-  "ideogram-4.5": "prompt; aspect_ratio; images (up to 5) to edit; metadata.quality high|medium|low|very_low (very_low needs an image)",
-  "ideogram-3.0": "prompt; aspect_ratio; negative_prompt; metadata.style_type (AUTO, GENERAL, REALISTIC, DESIGN, RENDER_3D, ANIME)",
-  "ideogram-3.0-turbo": "prompt; aspect_ratio; negative_prompt; metadata.style_type",
-  "ideogram-3.0-quality": "prompt; aspect_ratio; negative_prompt; metadata.style_type",
-  "flux-3-klein": "prompt; aspect_ratio; resolution 768sq|1k|1.5k|2k|4k; images as references",
-  "qwen-image-3.0": "prompt; aspect_ratio; resolution; up to 3 images", "qwen-image-3.0-pro": "prompt; aspect_ratio; resolution 1K|2K; up to 3 images",
-  "krea-3": "prompt; aspect_ratio; resolution 0.5K|1K|2K; up to 8 images; metadata.variant berry|jam",
-  "mai-image-2.6": "prompt; aspect_ratio; resolution 1K|2K (ignored with images); up to 5 images", "mai-image-2.6-flash": "prompt; aspect_ratio; resolution 1K|2K (ignored with images); up to 5 images",
-  "hidream-o1": "prompt; aspect_ratio; resolution; up to 3 images", "hidream-o1-dev": "prompt; aspect_ratio; resolution; up to 3 images",
-  "hidream-e1-full": "prompt = the edit instruction; exactly 1 image", "hidream-i1-full": "prompt; aspect_ratio; resolution (text only)", "hidream-i1-dev": "prompt; aspect_ratio; resolution (text only)",
-  "midjourney": "prompt (Midjourney flags like --v work); aspect_ratio; metadata style, version, sref, cref, cw; returns the 2x2 grid",
-  "ai-poster": "prompt; aspect_ratio; metadata.textBlocks (text to print), metadata.usageContext",
-  "ai-product-images": "images[0] = the product photo; prompt; aspect_ratio; metadata.text, textPosition, usageContext",
-  "veo3": "prompt; aspect_ratio 16:9|9:16; resolution; images[0] as start frame; fixed 5 s",
-  "kling-o1": "prompt (refer to images as @Image1); resolution; duration; aspect_ratio; up to 2 images (first/last frame); video_url to edit a video",
-  "wan3.0-video-prime": "prompt; duration; resolution 480P|720P|1080P; aspect_ratio (default adaptive); up to 2 images (first/last frame); audio",
-  "wan-2.7": "prompt; duration; resolution; aspect_ratio; up to 2 images as keyframes",
-  "wan-2.6": "prompt; duration; resolution; aspect_ratio; images[0] = image to video; video_url = reference video; metadata.shot_type single|multi",
-  "seedance-1.0-pro": "prompt; duration 5|10; aspect_ratio; images[0] = image to video",
-  "heygen-video": "talking avatar: images[0] = portrait (or metadata.avatar_id), prompt = script, metadata.voice_id (see this model's voices), metadata.speed 0.5-1.5; or metadata.audio_url instead of script; aspect_ratio 16:9|9:16|1:1|4:5|5:4",
-  "video-upscale": "video_url; duration = the input's length in seconds; resolution 720p|1080p|4k",
-  "video-sound": "video_url; duration = the input's length in seconds; prompt = the sounds you want",
-  "video-reframe": "video_url (up to 10 s); duration = its length; aspect_ratio = the new frame; prompt optional",
-  "talking-photo": "images[0] = portrait; prompt = script; resolution 720p|1080p; metadata.voice (e.g. 'Zephyr (Female)')",
-  "video-translate": "video_url (mp4); duration = its length in seconds; metadata.outputLanguage (e.g. Spanish)",
-  "hunyuan-3d-3.1": "prompt or images[0]; returns a GLB", "tripo-h3.1": "prompt or 1-4 images (front, left, back, right); metadata options (texture, pbr, quad, faceLimit, ...)",
-  "meshy-7": "prompt or 1-4 images; metadata options (topology, targetPolycount, enablePbr, enableRigging, enableAnimation, ...)",
-  "trellis-3d": "1-5 images of the same object (no prompt)", "rodin-gen-2": "prompt and/or up to 5 images; metadata options (quality, material, geometryFileFormat, ...)",
+  "ideogram-4.5": "prompt; aspect_ratio auto|1:1|1:3|3:1|1:2|2:1|9:16|16:9|10:16|16:10|2:3|3:2|3:4|4:3|4:5|5:4; resolution 1K|2K; images (up to 5) to edit; metadata.quality high|medium|low|very_low (very_low edits an image)",
+  "ideogram-3.0": "prompt; aspect_ratio 1:1|1:3|3:1|1:2|2:1|9:16|16:9|10:16|16:10|2:3|3:2|3:4|4:3|4:5|5:4; negative_prompt; metadata.style_type AUTO|GENERAL|REALISTIC|DESIGN|RENDER_3D|ANIME or metadata.style_preset (e.g. WATERCOLOR, ART_DECO, POP_ART, OIL_PAINTING, VINTAGE_POSTER, FLAT_VECTOR)",
+  "ideogram-3.0-turbo": "same as ideogram-3.0", "ideogram-3.0-quality": "same as ideogram-3.0",
+  "flux-3-klein": "prompt; aspect_ratio auto|21:9|2:1|16:9|3:2|7:5|4:3|5:4|1:1|4:5|3:4|5:7|2:3|9:16|1:2|9:21; resolution 768sq|1k|1.5k|2k|4k; images as references",
+  "qwen-image-3.0": "prompt (up to 800 characters); aspect_ratio 1:1|16:9|9:16|4:3|3:4|3:2|2:3|4:5|5:4|2:1|1:2|21:9|9:21|3:1|1:3; resolution 1K|2K; up to 3 images", "qwen-image-3.0-pro": "same as qwen-image-3.0 (2K costs more)",
+  "krea-3": "prompt; aspect_ratio 1:1|16:9|9:16|4:3|3:4|3:2|2:3|4:5|5:4|2:1|1:2|21:9|9:21; resolution 0.5K|1K|2K; up to 8 images; metadata.variant berry|jam",
+  "mai-image-2.6": "prompt; aspect_ratio auto|1:1|16:9|9:16|4:3|3:4|3:2|2:3|4:5|5:4|2:1|1:2|21:9|9:21; resolution 1K|2K (both ignored with images); up to 5 images", "mai-image-2.6-flash": "same as mai-image-2.6",
+  "hidream-o1": "prompt; aspect_ratio 1:1|16:9|9:16|4:3|3:4|3:2|2:3|21:9|9:21; resolution 2K|4K; up to 3 images", "hidream-o1-dev": "same as hidream-o1",
+  "hidream-e1-full": "prompt = the edit instruction; exactly 1 image", "hidream-i1-full": "prompt; aspect_ratio 1:1|16:9|9:16|4:3|3:4|3:2|2:3|21:9|9:21; resolution 1K|2K (text only)", "hidream-i1-dev": "same as hidream-i1-full",
+  "midjourney": "prompt (--v and --ar are moved into their fields, other flags stay); aspect_ratio 1:1|4:3|3:4|16:9|9:16; images (up to 5) as image prompts; metadata.version 8.2 (default)|8|7.0|6.1|6.0|niji6|niji5|niji4, imageQuality 0.25|0.5|1|2, artisticLevel 50|100|250|750, style, view, characterShot, lighting, sref, cref, cw; returns the 2x2 grid",
+  "ai-poster": "prompt; aspect_ratio 1:1|16:9|9:16; metadata.textBlocks: up to 3 texts, each a string or {text, position top|middle|bottom}; metadata.usageContext social-media|school-campus|club-team|community|party-event|store-business|real-estate|announcement",
+  "ai-product-images": "images[0] = the product photo; prompt; aspect_ratio 1:1|3:4|16:9|9:16; metadata.text and textPosition top|middle|bottom; metadata.usageContext main-product|lifestyle|product-detail|feature-highlight|comparison|ad-creative|website-hero|promotional-sale",
+  "veo3": "prompt; aspect_ratio 16:9|9:16; resolution 720p|1080p; images[0] as start frame; fixed 5 s",
+  "kling-o1": "prompt (refer to images as @Image1); duration 5|10; resolution 720p|1080p; aspect_ratio 16:9|9:16|1:1; up to 2 images (first/last frame); or video_url (3-10 s) to edit a video, duration = its length",
+  "wan3.0-video-prime": "prompt; duration 2-30; resolution 480P|720P|1080P; aspect_ratio 16:9|9:16|1:1|4:3|3:4|adaptive; up to 2 images (first/last frame); audio; metadata.referenceImages (up to 10), referenceVideos (up to 5), referenceAudios (up to 5) as URL lists, metadata.fileUrl (a reference document), metadata.promptExtend",
+  "wan-2.7": "prompt; duration 2-15; resolution 720P|1080P; aspect_ratio 16:9|9:16|1:1|4:3|3:4; up to 2 images as first/last frame; or video_url (+ images) as references, or metadata.references [{type: reference_image|reference_video, url}]; metadata.audioReference",
+  "wan-2.6": "prompt; duration 5|10|15 (5|10 with video_url); resolution 720P|1080P; aspect_ratio 16:9|9:16; images[0] = image to video; video_url = reference video; metadata.shot_type single|multi",
+  "seedance-1.0-pro": "prompt; duration 5|10; aspect_ratio 16:9|9:16|1:1|21:9|9:21|4:3|3:4; images[0] = image to video (always 1080p)",
+  "heygen-video": "talking avatar: images[0] = portrait (or metadata.avatar_id), prompt = script, metadata.voice_id (see this model's voices), metadata.speed 0.5-1.5; or metadata.audio_url instead of script; aspect_ratio 16:9|9:16|1:1",
+  "video-upscale": "video_url (up to 300 s); duration = the input's length in seconds; resolution 720p (default)|1080p|4k",
+  "video-sound": "video_url (up to 900 s); duration = the input's length in seconds; prompt = the sounds you want (up to 50 characters)",
+  "video-reframe": "video_url (up to 10 s); duration = its length; aspect_ratio 1:1|3:4|4:3|9:16|16:9|21:9|9:21; prompt optional",
+  "talking-photo": "images[0] = portrait; prompt = script (up to 1,000 characters); resolution 720p|1080p; metadata.voice (e.g. 'Zephyr (Female)', 'Puck (Male)', 'Kore (Female)'), metadata.voiceLanguage (e.g. 'English (US)', 'German'), metadata.voicePrompt (how to speak)",
+  "video-translate": "video_url (mp4, up to 900 s, with speech); duration = its length in seconds; metadata.outputLanguage (e.g. Spanish, German, Japanese)",
+  "hunyuan-3d-3.1": "prompt or images[0]; seed; returns a GLB",
+  "tripo-h3.1": "prompt or 1-4 images (front, left, back, right); seed; metadata texture (false = none), textureQuality detailed, geometryQuality standard|detailed, quad, autoSize, faceLimit 1000-2000000, textureAlignment original_image|geometry, orientation default|align_image, negativePrompt (text only); price depends on these",
+  "meshy-7": "prompt or 1-4 images; seed; metadata shouldTexture (false = preview, cheaper), ultraMode, modelType standard|lowpoly|smart-topology, topology triangle|quad, targetPolycount 100-300000, shouldRemesh, symmetryMode off|auto|on, enablePbr, poseMode a-pose|t-pose, texturePrompt, enableRigging + riggingHeightMeters, enableAnimation + animationActionId 0-696; price depends on these",
+  "trellis-3d": "1-5 images of the same object (no prompt); seed; metadata textureSize 512|1024|2048, generateColor, generateNormal, saveGaussianPly, returnNoBackground, ssGuidanceStrength / slatGuidanceStrength 0-10, ssSamplingSteps / slatSamplingSteps 1-50, meshSimplify 0.9-0.98",
+  "rodin-gen-2": "prompt and/or up to 5 images; seed; metadata quality high|medium|low|extra-low, qualityOverride (exact polygon count), material PBR|Shaded|All, meshMode Quad|Raw, geometryFileFormat glb|usdz|fbx|obj|stl, tapose, useOriginalAlpha, bboxCondition [w, h, l], addons [HighPack]",
   "scribe-v2": "video_url = URL of the audio or video file; duration = its length in seconds (for the price); returns a transcript file", "scribe-v1": "same as scribe-v2 (older model)",
 };
 const websiteMediaEntry = (w) => ({
@@ -519,8 +621,10 @@ async function websiteGenerate(ctx, w, a, limit) {
       return `heygen:${id}`;
     };
   } else {
-    const b = w.body(a);
-    body = { ...b, productNo: "glbgpt", agentId: b.agentId ?? w.agentId, shareStatus: 0, enhancePrompt: false };
+    const b = defined(w.body(a));
+    // metadata extras first, so the fields the connector builds (and checks) win; wrapped requests get them inside the wrapper.
+    const merged = w.wrap ? { ...b, [w.wrap]: { ...extras(a), ...b[w.wrap] } } : { ...extras(a), ...b };
+    body = { ...merged, productNo: "glbgpt", agentId: b.agentId ?? w.agentId, shareStatus: 0, enhancePrompt: enhanceOf(a) };
     credits = Math.max(0, Math.round(Number(w.credits(a)) || 0));
     const url = WEB + (typeof w.path === "function" ? w.path(a) : w.path);
     submit = async () => {
@@ -680,7 +784,7 @@ const TOOLS = [
         watermark: { type: "boolean", description: "Provider watermark on/off where offered." },
         audio: { type: "boolean", description: "Generate sound with the video (some video models). Changes the price." },
         draft: { type: "boolean", description: "flux-3-video only: cheaper draft render." },
-        metadata: { type: "object", description: "Model-specific extras listed for the model (e.g. metadata.output_format)." },
+        metadata: { type: "object", description: "Model-specific extras listed for the model (e.g. metadata.output_format). For website-only models every key is passed on to the website's request, so any option its own form has can be set; metadata.enhancePrompt true turns on the website's prompt enhancer." },
       },
       required: ["model"],
       additionalProperties: false,

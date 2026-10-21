@@ -187,6 +187,8 @@ Price in credits per video, at the default resolution and length.
 
 Images, videos, tools, 3D and speech to text that only glbgpt.com has. `glbgpt_generate` sends them through the website's own endpoints with your login token, using the request formats read from the website's code on 21 October 2026. `glbgpt_list_models` shows each one's inputs (`usage`).
 
+The connector sends the same fields the website's own form sends (checked against the website's code and settings on 21 October 2026), and every `metadata` key is passed on as is, so any option the website offers can be set. `metadata.enhancePrompt: true` turns on the website's prompt enhancer (off by default). `glbgpt_list_models` with `model` set lists each model's options and allowed values.
+
 **Status: tested live on 21 October 2026** with one generation each at the cheapest settings. Prices are the website's list prices; for videos they're estimates (GlobalGPT bills the exact amount).
 
 | Kind | Model | ID | From (credits) | Live test |
@@ -199,13 +201,13 @@ Images, videos, tools, 3D and speech to text that only glbgpt.com has. `glbgpt_g
 | Image | Qwen Image 3.0 / 3.0 Pro | `qwen-image-3.0` / `qwen-image-3.0-pro` | 100 / 133 | ✅ both work |
 | Image | FLUX.3 Klein | `flux-3-klein` | 21 (768sq) | ✅ works (768sq) |
 | Image | HiDream O1 / O1 Dev / E1 Full / I1 Full / I1 Dev | `hidream-o1` / `hidream-o1-dev` / `hidream-e1-full` / `hidream-i1-full` / `hidream-i1-dev` | 133 / 67 / 80 / 80 / 40 | ✅ all five work (E1 Full edits one image) |
-| Image tool | AI Poster | `ai-poster` | 400 | ⚠️ works with a prompt only; `metadata.textBlocks` as plain strings is refused (code 0, "Sorry, something went wrong") |
+| Image tool | AI Poster | `ai-poster` | 400 | ✅ works; text blocks are now sent as `{text, position}` like the website (plain strings were refused before the fix) |
 | Image tool | AI Product Images | `ai-product-images` | 400 | ✅ works |
 | Video | Veo 3 | `veo3` | 1,500 | ✅ works (fixed 5 s) |
-| Video | Kling O1 | `kling-o1` | about 200 per second | ⚠️ works at 5 s; the website only takes 5 or 10 s (3 s is refused) |
+| Video | Kling O1 | `kling-o1` | about 200 per second | ✅ works; new videos are 5 or 10 s (the connector now says so before submitting) |
 | Video | Wan 3.0 Prime | `wan3.0-video-prime` | about 160 per second | ✅ works (2 s, 480P) |
 | Video | Wan 2.7 | `wan-2.7` | about 200 per second | ✅ works (2 s) |
-| Video | Wan 2.6 | `wan-2.6` | about 200 per second | ⚠️ works only with `aspect_ratio` as a size (`1280*720`, `720*1280`, `1920*1080`, `1080*1920`); the default `16:9` is refused ("Invalid size value") |
+| Video | Wan 2.6 | `wan-2.6` | about 200 per second | ✅ works; `16:9` / `9:16` are now turned into the pixel size the website expects |
 | Video | Seedance 1.0 Pro | `seedance-1.0-pro` | 2,000 (5 s) | ⏳ submitted fine (5 s), but stuck in GlobalGPT's own queue ("High demand right now") for 8+ hours; the website shows it as "In queue" too, so the connector reports it correctly |
 | Video | HeyGen avatar video | `heygen-video` | quoted per video (about 1,000 per minute) | ❌ "Insufficient credit. This operation requires 'api' credits." (voices list works) |
 | Video tool | Video Upscale | `video-upscale` | 35 / 125 / 498 per second (720p / 1080p / 4K) | ✅ works (720p) |
@@ -213,11 +215,11 @@ Images, videos, tools, 3D and speech to text that only glbgpt.com has. `glbgpt_g
 | Video tool | Video Reframe | `video-reframe` | 200 per second | ✅ works (9:16) |
 | Video tool | Talking Photo | `talking-photo` | 83 / 150 per second of speech | ✅ works (720p) |
 | Video tool | Video Translator | `video-translate` | 222 per second | ❌ failed with GlobalGPT's "generation service temporarily unavailable" (tested on a 2 s clip with no speech) |
-| 3D | Hunyuan 3D 3.1 / Tripo h3.1 / Meshy 7 / TRELLIS 3D / Rodin Gen-2 | `hunyuan-3d-3.1` / `tripo-h3.1` / `meshy-7` / `trellis-3d` / `rodin-gen-2` | 100 / 330 / 1,760 / 500 / 1,400 | ✅ all five work (GLB) |
+| 3D | Hunyuan 3D 3.1 / Tripo h3.1 / Meshy 7 / TRELLIS 3D / Rodin Gen-2 | `hunyuan-3d-3.1` / `tripo-h3.1` / `meshy-7` / `trellis-3d` / `rodin-gen-2` | 100 / 330 untextured, 660 textured (default) / 1,760 preview, 2,640 full (default) / 500 / 1,400 | ✅ all five work (GLB) |
 | Speech to text | Scribe v2 | `scribe-v2` | 12 per minute | ✅ works (returns a .txt transcript) |
 | Speech to text | Scribe v1 | `scribe-v1` | 12 per minute | not tested |
 
-Known connector issues found in the live test: website media errors say "refused the chat" (the chat error wording), `glbgpt_check_task` reports 3D results as `type: "image"`, and `glbgpt_usage` lists only API generations, not website ones.
+Known connector issues found in the live test: `glbgpt_check_task` reports 3D results as `type: "image"`, and `glbgpt_usage` lists only API generations, not website ones. (Fixed since: AI Poster text blocks, Kling O1 lengths, Wan 2.6 sizes, and website errors no longer say "refused the chat".)
 
 ## Not supported
 
