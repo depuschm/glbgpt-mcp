@@ -1207,7 +1207,10 @@ const handlers = {
     if (!prompt) throw new ToolError("prompt is required.");
     const images = Array.isArray(a.images) ? a.images : [];
     if (images.some((r) => !isRef(r))) throw new ToolError("images must be public https URLs or data: URIs.");
-    const files = Array.isArray(a.files) ? a.files.filter(Boolean) : [];
+    let files = Array.isArray(a.files) ? a.files.filter(Boolean) : [];
+    // Agents that read documents (ChatPDF) also take them in images: Claude can keep an older copy of this
+    // connector's tool list, without the files field, for a while after an update.
+    if (!files.length && images.length && websiteModel(a.model)?.files) files = images;
     if (files.length) {
       const web = websiteModel(a.model);
       if (!web) throw new ToolError("files work with GlobalGPT's website-only models (e.g. chatpdf). API chat models take images instead.");

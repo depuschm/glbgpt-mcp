@@ -501,5 +501,9 @@ check('chatpdf refuses a non-PDF', r.err && r.text.includes('PDF'));
 r = await tool(envT(), 'glbgpt_chat', { model: 'made-up-model', prompt: 'x', files: ['https://cdn.example/doc.pdf'] });
 check('files with an API model -> explains', r.err && r.text.includes('website-only'));
 
+reset();
+r = await tool(envT(), 'glbgpt_chat', { model: 'chatpdf', prompt: 'Summarise it', images: ['https://cdn.example/doc.pdf'] });
+check('chatpdf also takes the PDF in images (older tool lists)', !r.err && r.json.answer === 'OK' && calls.some((c) => c.path === '/ai-api/ai/agent/uploadFile'));
+
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);
