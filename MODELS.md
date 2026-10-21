@@ -217,7 +217,7 @@ The connector sends the same fields the website's own form sends (checked agains
 | Video tool | Video Translator | `video-translate` | 222 per second | ❌ failed with GlobalGPT's "generation service temporarily unavailable" (tested on a 2 s clip with no speech) |
 | 3D | Hunyuan 3D 3.1 / Tripo h3.1 / Meshy 7 / TRELLIS 3D / Rodin Gen-2 | `hunyuan-3d-3.1` / `tripo-h3.1` / `meshy-7` / `trellis-3d` / `rodin-gen-2` | 100 / 330 untextured, 660 textured (default) / 1,760 preview, 2,640 full (default) / 500 / 1,400 | ✅ all five work (GLB) |
 | Speech to text | Scribe v2 | `scribe-v2` | 12 per minute | ✅ works (returns a .txt transcript) |
-| Speech to text | Scribe v1 | `scribe-v1` | 12 per minute | not tested |
+| Speech to text | Scribe v1 | `scribe-v1` | 12 per minute | ✅ works (returns a .txt transcript) |
 
 Known connector issues found in the live test: `glbgpt_check_task` reports 3D results as `type: "image"`, and `glbgpt_usage` lists only API generations, not website ones. (Fixed since: AI Poster text blocks, Kling O1 lengths, Wan 2.6 sizes, and website errors no longer say "refused the chat".)
 
