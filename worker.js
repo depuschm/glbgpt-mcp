@@ -42,7 +42,7 @@ const WEBSITE_ALIASES = { sonar: "perplexity", "deepresearch": "deep-research", 
 // Website workflow agents reached like chat models (through /dify-api); they can run for minutes.
 const WEBSITE_AGENTS = {
   "deep-research": { agentId: "4341", name: "Deep Research", prefix: "/dify-api" },
-  "chatpdf": { agentId: "6081", name: "ChatPDF", prefix: "/dify-api", files: { required: true, max: 1, maxBytes: 15 * 1024 * 1024, pdfOnly: true } },
+  "chatpdf": { agentId: "6081", name: "ChatPDF", files: { required: true, max: 1, maxBytes: 15 * 1024 * 1024, pdfOnly: true } }, // the ChatPDF page posts to /ai-api
 };
 const UA = "glbgpt-mcp-worker/2.0 (cloudflare-workers)";
 const SERVER_INFO = { name: "glbgpt-mcp", version: "2.0.0" };

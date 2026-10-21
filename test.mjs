@@ -492,7 +492,7 @@ check('deep research listed with the website chat models', !r.err && r.json.mode
 reset();
 r = await tool(envT(), 'glbgpt_chat', { model: 'chatpdf', prompt: 'Summarise it', files: ['https://cdn.example/doc.pdf'] });
 const up = calls.find((c) => c.path === '/ai-api/ai/agent/uploadFile');
-const cp = calls.find((c) => c.path === '/dify-api/ai/agent/chatStream');
+const cp = calls.find((c) => c.path === '/ai-api/ai/agent/chatStream');
 check('chatpdf: PDF uploaded for agent 6081, sent as a local_file', !r.err && r.json.answer === 'OK' && up && cp.body.agentId === '6081' && cp.body.files[0].uploadFileId === 'pdf-key' && cp.body.files[0].transferMethod === 'local_file' && cp.body.files[0].type === 'file' && !calls.some((c) => c.path === '/chat/completions'));
 r = await tool(envT(), 'glbgpt_chat', { model: 'chatpdf', prompt: 'Summarise it' });
 check('chatpdf without a file -> asks for it', r.err && r.text.includes('files'));
