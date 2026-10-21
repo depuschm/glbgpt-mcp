@@ -7,7 +7,7 @@ Snapshot of what this connector can use, checked on **21 October 2026**. GlobalG
 - **Website media**: images, videos, tools, 3D and speech to text only on glbgpt.com, also through `GLBGPT_TOKEN`.
 - **Not supported**: on glbgpt.com, but not reachable through this connector (yet).
 
-Totals: **103 through the API** (42 chat, 29 image, 21 video, 11 audio), **18 more chat models through the website**, and **39 website-only media models and tools** (tested live on 21 October 2026, see below).
+Totals: **103 through the API** (42 chat, 29 image, 21 video, 11 audio), **18 more chat models through the website**, and **40 website-only media models and tools** (tested live on 21 October 2026, see below).
 
 ## Chat
 
@@ -195,7 +195,7 @@ The connector sends the same fields the website's own form sends (checked agains
 |---|---|---|---|---|---|
 | Image | Ideogram 4.5 | `ideogram-4.5` | 27 (very low) / 100 (low) / 200 (medium) / 330 (high) / 730 (high, editing) | 100 (low) | ✅ works |
 | Image | Ideogram 3.0 / Turbo / Quality | `ideogram-3.0` / `ideogram-3.0-turbo` / `ideogram-3.0-quality` | 200 / 100 / 300 | 200 / 100 / 300 | ✅ all three work |
-| Image | Midjourney | `midjourney` | 150 (the website lists 100) | 150 | ✅ works (returns the 2x2 grid) |
+| Image | Midjourney | `midjourney` | 150 (the website lists 100) | 150 (grid), 150 (U1 upscale) | ✅ works: the grid lists its buttons; U1–U4, V1–V4 and reroll can be pressed (`metadata.action` + `metadata.task_id`). An upscaled image's own follow-up buttons aren't available (GlobalGPT's task record doesn't include them) |
 | Image | MAI Image 2.6 / 2.6 Flash | `mai-image-2.6` / `mai-image-2.6-flash` | 104 / 52 at 1K (233 / 117 at 2K) | 104 / 52 | ✅ both work |
 | Image | Krea 3 | `krea-3` | 25 (0.5K) / 100 (1K) / 400 (2K) | 25 | ✅ works |
 | Image | Qwen Image 3.0 / 3.0 Pro | `qwen-image-3.0` / `qwen-image-3.0-pro` | 100 / 133 (250 at 2K), +10 per input image | 100 / 133 | ✅ both work |
@@ -203,6 +203,7 @@ The connector sends the same fields the website's own form sends (checked agains
 | Image | HiDream O1 / O1 Dev / E1 Full / I1 Full / I1 Dev | `hidream-o1` / `hidream-o1-dev` / `hidream-e1-full` / `hidream-i1-full` / `hidream-i1-dev` | 133 / 67 / 80 / 80 / 40 | 133 / 67 / 80 / 80 / 40 | ✅ all five work (E1 Full edits one image) |
 | Image tool | AI Poster | `ai-poster` | 400 | 400 (twice) | ✅ works, text on the poster included (`metadata.textBlocks` as strings or `{text, position}`) |
 | Image tool | AI Product Images | `ai-product-images` | 400 | 400 | ✅ works |
+| Image tool | Logo Maker | `logo-maker` | 100 | 100 | ✅ works (`metadata.brandName`, `style`, `industry`, aspect ratio) |
 | Video | Veo 3 | `veo3` | 1,500 (fixed 5 s) | 1,500 | ✅ works |
 | Video | Kling O1 | `kling-o1` | 1,000 / 2,000 (720p, 5 / 10 s), 1,400 / 2,800 (1080p); editing a video 300 per s (720p) | 1,000 (5 s) | ✅ works; new videos are 5 or 10 s |
 | Video | Wan 3.0 Prime | `wan3.0-video-prime` | 300 (480P, 2 s) to 19,600 (1080P, 30 s), from the website's table | 300 (480P, 2 s) | ✅ works |
@@ -225,5 +226,4 @@ Issues found in the live test and fixed the same day: AI Poster text blocks, Kli
 ## Not supported
 
 - **AI Detector (text)**: the website now hands the text to Yukie (its agent app) instead of a detector endpoint, so it's part of Yukie.
-- **Logo Maker**: not looked at yet.
 - **Whole apps, not suitable as connector tools**: Yukie, Agentic Canvas, GlobalClaw, Deep Research, ChatPDF, AI Translate, AI Note Taker.

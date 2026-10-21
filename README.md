@@ -11,10 +11,10 @@ It uses GlobalGPT's official [API](https://www.glbgpt.com/home/api/docs) with yo
 | Tool | What it does |
 |---|---|
 | `glbgpt_chat` | One question to a chat model, optionally with a system prompt, images, or a JSON Schema for JSON answers |
-| `glbgpt_generate` | Image, video, audio, 3D or a transcript, or an image or video tool, with any model the API lists or the website-only ones |
+| `glbgpt_generate` | Image, video, audio, 3D or a transcript, an image or video tool, a logo, or an AI-image/video check, with any model the API lists or the website-only ones |
 | `glbgpt_check_task` | Waits for a running generation and returns its URL |
 | `glbgpt_list_models` | GlobalGPT's live model list with prices and parameters, or one model's details |
-| `glbgpt_usage` | The connector's daily limit and today's spend, plus your recent generations |
+| `glbgpt_usage` | The connector's daily limit and today's spend, your recent generations (API and website), and what the account was actually charged |
 
 Every generation is priced with GlobalGPT's estimate first, then submitted with an idempotency key, so a retried submit can never create or charge a second task. A generate call waits up to 40 seconds for the result and otherwise returns a `task_id` for `glbgpt_check_task`. Results are URLs, valid for 30 days. Images go in as public `https` URLs or `data:` URIs. Fields a model doesn't take are dropped by GlobalGPT and listed in `ignored_parameters`.
 
@@ -22,7 +22,12 @@ GlobalGPT's API limits: 60 requests per minute, 5 chat streams and 10 media task
 
 **Website-only chat models.** glbgpt.com has chat models the API doesn't offer (e.g. Claude Opus 5.5, GPT-6.1 Sol, Gemini 4 Argon). With the optional `GLBGPT_TOKEN` set, `glbgpt_chat` sends a model the API refuses through the website's own chat instead, and `glbgpt_list_models` lists those models with `source: "website"`. They take text only (no images), each message becomes a conversation in your glbgpt.com history, and the website adds its own system prompt, so a message costs more than through the API. A model GlobalGPT later adds to the API automatically goes through the API again.
 
-**Website-only media.** The same token also unlocks the website's images, videos, video tools, 3D models and speech to text that the API lacks (Midjourney, Kling O1, Veo 3, HeyGen avatar videos, Tripo/Meshy 3D, Scribe, …, see [MODELS.md](MODELS.md)). `glbgpt_generate` sends them through the website's own endpoints; task ids start with `web:` or `heygen:`. Their prices come from the website's list, so the daily credit counter is an estimate for them.
+**Website-only media.** The same token also unlocks the website's images, videos, video tools, 3D models and speech to text that the API lacks (Midjourney, Kling O1, Veo 3, HeyGen avatar videos, Tripo/Meshy 3D, Scribe, …, see [MODELS.md](MODELS.md)). `glbgpt_generate` sends them through the website's own endpoints; task ids start with `web:` or `heygen:`. Their prices come from the website's lists and price tables (checked against real charges), so the daily credit counter is a close estimate for them; `glbgpt_usage` shows the real charges under `credit_records`.
+
+- **Every website option:** the connector sends the same fields as the website's own form, and any `metadata` key is passed on as is, so whatever the website offers can be set. `glbgpt_list_models` with `model` set lists a model's options and allowed values. `metadata.enhancePrompt: true` turns on the website's prompt enhancer.
+- **Midjourney buttons:** a finished grid lists its buttons (`actions`: U1–U4, V1–V4, reroll). Press one with `metadata.action` and `metadata.task_id` (the grid's task id).
+- **AI Image / Video Detector:** `ai-image-detector` (an image URL or `data:` URI) and `ai-video-detector` (`video_url`, `duration`, `metadata.frame_ms`) return AI-generated and deepfake scores right away. A file that isn't in your GlobalGPT media library yet is uploaded there first.
+- **Logo Maker:** `logo-maker` with `metadata.brandName`, `style`, `industry` and an aspect ratio.
 
 ## Setup
 
@@ -41,13 +46,13 @@ Worker → **Settings → Variables and Secrets** (the runtime section, *not* **
 |---|---|---|
 | `GLBGPT_API_KEY` | Secret | the API key from step 1 |
 | `CONNECTOR_SECRET` | Secret | a random string of at least 32 letters/digits only (if you put it in the URL, symbols like `/ # ? % +` break it) |
-| `GLBGPT_TOKEN` | Secret | optional: your GlobalGPT login token, for website-only chat models (see below) |
+| `GLBGPT_TOKEN` | Secret | optional: your GlobalGPT login token, for website-only chat and media models (see below) |
 | `DAILY_CREDIT_LIMIT` | Text | optional: most credits generations may spend per day, e.g. `20000`. Not set = no limit |
 | `DISABLE_URL_SECRET` | Text | optional: `true` = accept the secret only as a header, not in the URL (see step 4) |
 
 Changing `DAILY_CREDIT_LIMIT` in the dashboard applies as soon as you save and deploy it there; no Git push needed. The day resets at midnight Berlin time (`LIMIT_TIMEZONE` in `worker.js`). `0` blocks generation; a value that isn't a number also blocks it, so a typo never removes the limit by accident. Chat isn't counted. The counter uses what GlobalGPT actually reserves for each task, and a task that fails is taken off again (GlobalGPT releases its credits). `wrangler.toml` sets `keep_vars = true`, so Git deploys don't overwrite it.
 
-Getting `GLBGPT_TOKEN` (only for website-only chat models): on your computer (Node.js 18+) run `npx @glbgpt/cli login`, then copy the token from `~/.config/glbgpt/credentials.json` without showing it:
+Getting `GLBGPT_TOKEN` (only for website-only models): on your computer (Node.js 18+) run `npx @glbgpt/cli login`, then copy the token from `~/.config/glbgpt/credentials.json` without showing it:
 
 ```powershell
 (Get-Content "$HOME\.config\glbgpt\credentials.json" | ConvertFrom-Json).token | Set-Clipboard
