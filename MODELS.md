@@ -218,11 +218,13 @@ The connector sends the same fields the website's own form sends (checked agains
 | 3D | Hunyuan 3D 3.1 / Tripo h3.1 / Meshy 7 / TRELLIS 3D / Rodin Gen-2 | `hunyuan-3d-3.1` / `tripo-h3.1` / `meshy-7` / `trellis-3d` / `rodin-gen-2` | 100 / 330 untextured, 660 textured (default) / 1,760 preview, 2,640 full (default) / 500 / 1,400 | ✅ all five work (GLB) |
 | Speech to text | Scribe v2 | `scribe-v2` | 12 per minute | ✅ works (returns a .txt transcript) |
 | Speech to text | Scribe v1 | `scribe-v1` | 12 per minute | ✅ works (returns a .txt transcript) |
+| Detector | AI Image Detector | `ai-image-detector` | not shown on the website | added 21 Oct evening, see below |
+| Detector | AI Video Detector | `ai-video-detector` | not shown on the website | added 21 Oct evening, see below |
 
 Issues found in the live test and fixed the same day: AI Poster text blocks, Kling O1 lengths, Wan 2.6 sizes, website errors that said "refused the chat", 3D results labelled `image`, failed tasks shown with their (released) reservation as spent, and `glbgpt_usage` not listing website generations (now under `recent_website`).
 
 ## Not supported
 
-- **AI Detector, AI Image Detector, AI Video Detector**: they need files uploaded into GlobalGPT's media library first (and a frame upload for videos); could be added later.
+- **AI Detector (text)**: the website now hands the text to Yukie (its agent app) instead of a detector endpoint, so it's part of Yukie.
 - **Logo Maker**: not looked at yet.
 - **Whole apps, not suitable as connector tools**: Yukie, Agentic Canvas, GlobalClaw, Deep Research, ChatPDF, AI Translate, AI Note Taker.

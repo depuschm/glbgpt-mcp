@@ -495,6 +495,9 @@ const WEBSITE_MEDIA_MODELS = {
   "meshy-7": threeD("6232", "meshy-v7", "Meshy 7", meshyCredits),
   "trellis-3d": threeD("6229", "trellis-3d", "TRELLIS 3D", 500, { imagesRequired: true, maxImages: 5, noPrompt: true }),
   "rodin-gen-2": threeD("6230", "rodin-gen2", "Rodin Gen-2", 1400, { maxImages: 5 }),
+  // detectors (synchronous: the scores come back in the same call)
+  "ai-image-detector": { name: "AI Image Detector", type: "detector", agentId: "6200", detector: "IMAGE", credits: () => 0 },
+  "ai-video-detector": { name: "AI Video Detector", type: "detector", agentId: "6201", detector: "VIDEO", credits: () => 0 },
   // speech to text
   "scribe-v2": {
     name: "Scribe v2 (speech to text)", type: "speech-to-text", agentId: "6175", path: "/ai-api/voice/elevenlabs/task/submit",
@@ -538,11 +541,13 @@ const WEBSITE_MEDIA_HINTS = {
   "meshy-7": "prompt or 1-4 images; seed; metadata shouldTexture (false = preview, cheaper), ultraMode, modelType standard|lowpoly|smart-topology, topology triangle|quad, targetPolycount 100-300000, shouldRemesh, symmetryMode off|auto|on, enablePbr, poseMode a-pose|t-pose, texturePrompt, enableRigging + riggingHeightMeters, enableAnimation + animationActionId 0-696; price depends on these",
   "trellis-3d": "1-5 images of the same object (no prompt); seed; metadata textureSize 512|1024|2048, generateColor, generateNormal, saveGaussianPly, returnNoBackground, ssGuidanceStrength / slatGuidanceStrength 0-10, ssSamplingSteps / slatSamplingSteps 1-50, meshSimplify 0.9-0.98",
   "rodin-gen-2": "prompt and/or up to 5 images; seed; metadata quality high|medium|low|extra-low, qualityOverride (exact polygon count), material PBR|Shaded|All, meshMode Quad|Raw, geometryFileFormat glb|usdz|fbx|obj|stl, tapose, useOriginalAlpha, bboxCondition [w, h, l], addons [HighPack]",
+  "ai-image-detector": "images[0] = the image (https URL or data: URI; JPG, PNG or WebP, up to 20 MB, at least 256 px); returns ai_generated and deepfake scores (0-1) and a summary. Use the result as a risk assessment, not proof",
+  "ai-video-detector": "video_url = the video (MP4, WebM or M4V, up to 60 s); duration = its length in seconds; images[0] = the still frame to check (https URL or data: URI), metadata.frame_ms = where that frame is in the video; checks that one frame and returns ai_generated and deepfake scores (0-1)",
   "scribe-v2": "video_url = URL of the audio or video file; duration = its length in seconds (for the price); returns a transcript file", "scribe-v1": "same as scribe-v2 (older model)",
 };
 const websiteMediaEntry = (w) => ({
   id: w.id, type: w.type, source: "website", description: `${w.name} (only on GlobalGPT's website)`, usage: WEBSITE_MEDIA_HINTS[w.id],
-  ...(w.heygen ? { price: "quoted per video (about 1,000 credits per minute)" } : { price_from: Math.round(Number(w.credits({ prompt: "x", duration: 5 })) || 0) }),
+  ...(w.heygen ? { price: "quoted per video (about 1,000 credits per minute)" } : w.detector ? { price: "not shown on the website; GlobalGPT bills it per run" } : { price_from: Math.round(Number(w.credits({ prompt: "x", duration: 5 })) || 0) }),
 });
 
 // Prices the website shows only as a range (or that depend on the input's length).
@@ -574,6 +579,99 @@ async function webRequest(env, method, url, body) {
   if (err) throw new ToolError(err);
   if (data === null) throw new ToolError(`GlobalGPT's website answered HTTP ${res.status} without JSON.`);
   return data;
+}
+
+// ---------------------------------------------------------------------------
+// AI Image / Video Detector
+// ---------------------------------------------------------------------------
+// The website analyses a file from the account's library (by id) or one uploaded to its storage
+// (by file key); for a video it analyses one still frame, which the browser captures and uploads.
+const DETECTOR_MAX_BYTES = { IMAGE: 20 * 1024 * 1024, VIDEO: 90 * 1024 * 1024 }; // video: the Worker's memory, not the site's 200 MB
+
+// Load an https URL or a data: URI into a Blob, refusing anything too big.
+async function loadMedia(src, maxBytes, what) {
+  const m = /^data:([^;,]*)(;base64)?,(.*)$/s.exec(src || "");
+  if (m) {
+    const bytes = m[2] ? Uint8Array.from(atob(m[3]), (c) => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(m[3]));
+    if (bytes.length > maxBytes) throw new ToolError(`The ${what} is larger than ${Math.round(maxBytes / 1048576)} MB.`);
+    return new Blob([bytes], { type: m[1] || "application/octet-stream" });
+  }
+  if (!/^https:\/\//i.test(src || "")) throw new ToolError(`The ${what} must be a public https URL or a data: URI.`);
+  let res;
+  try { res = await fetch(src); } catch (e) { throw new ToolError(`Couldn't download the ${what}: ${e && e.message}`); }
+  if (!res.ok) throw new ToolError(`Couldn't download the ${what} (HTTP ${res.status}).`);
+  if (Number(res.headers.get("content-length")) > maxBytes) throw new ToolError(`The ${what} is larger than ${Math.round(maxBytes / 1048576)} MB.`);
+  const blob = await res.blob();
+  if (blob.size > maxBytes) throw new ToolError(`The ${what} is larger than ${Math.round(maxBytes / 1048576)} MB.`);
+  return blob;
+}
+
+// Upload one file to the website (multipart, field "files"); returns its file key.
+async function webUpload(env, path, blob, name) {
+  if (!env.GLBGPT_TOKEN) throw new ToolError("This model is only on GlobalGPT's website, which needs GLBGPT_TOKEN (your login token) on the Worker.");
+  const form = new FormData();
+  form.append("files", new File([blob], name, { type: blob.type || "application/octet-stream" }));
+  let res;
+  try {
+    res = await fetch(`${WEB}${path}`, { method: "POST", headers: { Authorization: `Bearer ${env.GLBGPT_TOKEN}`, "User-Agent": UA }, body: form });
+  } catch (e) {
+    throw new ToolError(`Couldn't upload to GlobalGPT's website: ${e && e.message}`);
+  }
+  let data = null;
+  try { data = JSON.parse(await res.text()); } catch {}
+  const err = websiteError(res.status, data);
+  if (err) throw new ToolError(err);
+  const key = data?.files?.[0]?.fileKey ?? data?.data?.files?.[0]?.fileKey;
+  if (!key) throw new ToolError("GlobalGPT's website didn't return a file key for the upload.");
+  return String(key);
+}
+
+const fileName = (src, fallback) => (/^https:/i.test(src || "") ? decodeURIComponent(String(src).split("?")[0].split("/").pop() || "") : "") || fallback;
+
+async function runDetector(env, w, a) {
+  if (!env.GLBGPT_TOKEN) throw new ToolError(`${w.name} is only on GlobalGPT's website, which needs GLBGPT_TOKEN (your login token) on the Worker.`);
+  const video = w.detector === "VIDEO";
+  const src = video ? a.video_url : first(a)[0];
+  if (!src) throw new ToolError(video ? "AI Video Detector needs video_url (and duration, and the still frame to check in images[0])." : "AI Image Detector needs the image in images[0].");
+  const secs0 = video ? secs(a, 0) : 0;
+  if (video && !secs0) throw new ToolError("AI Video Detector needs duration: the video's length in seconds.");
+  if (video && secs0 > 60) throw new ToolError("AI Video Detector takes videos up to 60 seconds.");
+  const frameSrc = video ? first(a)[0] : undefined;
+  if (video && !frameSrc) throw new ToolError("AI Video Detector checks one still frame: pass that frame as an image in images[0] (https URL or data: URI), and metadata.frame_ms for where it is in the video.");
+
+  // The account's own creation: analyse it by id, like the website's library picker. Anything else: upload it.
+  let media = null;
+  if (/^https:/i.test(src)) {
+    try {
+      const data = await webRequest(env, "POST", `${WEB}/ai-api/ai/media/list/myCreation`, { page: 1, size: 50, status: "success", mediaType: video ? "2" : "1", productNo: "glbgpt" });
+      const rec = (data?.records ?? data?.data?.records ?? []).find((r) => r?.outputFileUrl === src);
+      if (rec?.id !== undefined) media = { mediaId: String(rec.id), mediaSource: "generated" };
+    } catch {}
+  }
+  if (!media) {
+    const blob = await loadMedia(src, DETECTOR_MAX_BYTES[w.detector], video ? "video" : "image");
+    const key = await webUpload(env, "/ai-api/ai/storage/upload", blob, fileName(src, video ? "video.mp4" : "image.png"));
+    media = { mediaId: key, mediaFileKey: key, mediaSource: "uploaded" };
+  }
+  let frame = {};
+  if (video) {
+    const blob = await loadMedia(frameSrc, 20 * 1024 * 1024, "frame image");
+    const frameMs = Math.max(0, Math.round(Number(meta(a).frame_ms) || 0));
+    frame = { frameFileKey: await webUpload(env, "/ai-api/ai/detector/frame/upload", blob, `detector-frame-${frameMs}.png`), frameTimestampMs: frameMs };
+  }
+  const r = await webRequest(env, "POST", `${WEB}/ai-api/ai/detector/analyze`, defined({
+    productNo: "glbgpt", agentId: w.agentId, ...media, mediaType: w.detector, durationSeconds: video ? Math.ceil(secs0) : undefined, ...frame,
+  }));
+  const d = r?.data && typeof r.data === "object" && !Array.isArray(r.data) ? r.data : r;
+  const score = (m) => (m && typeof m === "object" ? (m.availability === "available" || typeof m.score === "number" ? m.score : null) : typeof m === "number" ? m : null);
+  const { code, message, ...rest } = d || {};
+  return defined({
+    status: "succeeded", via: "website", model: w.id, type: "analysis",
+    ai_generated: score(d?.aiGenerated), deepfake: score(d?.deepfake), summary: str(d?.summary),
+    ...(video ? { frame_ms: frame.frameTimestampMs } : {}),
+    details: rest,
+    note: "Scores are 0-1 likelihoods. Use them as a risk assessment, not proof.",
+  });
 }
 
 // The account's recent website generations (website-only models; the API's list doesn't have them).
@@ -788,7 +886,7 @@ const TOOLS = [
   {
     name: "glbgpt_generate",
     title: "GlobalGPT generation (image, video, audio)",
-    description: "Generate an image, video, audio clip (speech, music) or 3D model, transcribe audio, or run an image or video tool (remove-bg, hd-upscale, face-swap, video-upscale, talking-photo, ...). Spends credits from the owner's GlobalGPT account; the price is checked first, and the owner may have set a daily credit limit. Parameters depend on the model: see glbgpt_list_models. Fields a model doesn't take are dropped and listed in ignored_parameters. Returns the finished url, or a task_id for glbgpt_check_task.",
+    description: "Generate an image, video, audio clip (speech, music) or 3D model, transcribe audio, run an image or video tool (remove-bg, hd-upscale, face-swap, video-upscale, talking-photo, ...), or check an image or video for AI generation (ai-image-detector, ai-video-detector: the scores come back directly). Spends credits from the owner's GlobalGPT account; the price is checked first, and the owner may have set a daily credit limit. Parameters depend on the model: see glbgpt_list_models. Fields a model doesn't take are dropped and listed in ignored_parameters. Returns the finished url, or a task_id for glbgpt_check_task.",
     inputSchema: {
       type: "object",
       properties: {
@@ -830,7 +928,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        type: { type: "string", enum: ["chat", "image", "video", "audio", "3d", "speech-to-text"], description: "Only list this kind of model." },
+        type: { type: "string", enum: ["chat", "image", "video", "audio", "3d", "speech-to-text", "detector"], description: "Only list this kind of model." },
         model: { type: "string", description: "Show one model's details instead of a list." },
       },
       additionalProperties: false,
@@ -928,6 +1026,7 @@ async function generate(ctx, a) {
     // Not in the API, but on the website: submit it there instead.
     const w = isModelMissing(e) ? websiteMedia(body.model) : null;
     if (!w) throw e;
+    if (w.detector) return await runDetector(ctx.env, w, body);
     const { taskId, credits } = await websiteGenerate(ctx, w, body, limit);
     const result = await waitForWebTask(ctx.env, limit, taskId, Date.now() + WAIT_MS);
     return { ...result, model: w.id, credits_estimated: credits, ...(APPROX_PRICE.has(w.id) ? { price_note: "estimated from the website's list price; GlobalGPT bills the exact amount" } : {}) };

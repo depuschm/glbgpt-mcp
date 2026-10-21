@@ -36,7 +36,9 @@ globalThis.fetch = async (url, init = {}) => {
     if (init.headers?.Authorization !== `Bearer ${TOKEN}`) return res(200, { code: 401, message: 'token invalid' });
     const wp = u.pathname;
     if (wp === '/ai-api/ai/task/get') { state.webPolls = (state.webPolls || 0) + 1; return res(200, state.webFail ? { code: 1, task: { status: 'failed', failedReason: 'nsfw', errorCode: 'X' } } : state.webPolls > (state.webPollsUntilDone || 0) ? { code: 1, task: { status: 'success', outputFileUrl: 'https://cdn.example/web.png', mediaType: state.webMediaType || 1 } } : { code: 1, task: { status: 'processing' } }); }
-    if (wp === '/ai-api/ai/media/list/myCreation') return res(200, { code: 1, records: [{ id: '77', agentId: '6233', status: 'success', mediaType: 4, outputFileUrl: 'https://cdn.example/m.glb', createAt: '2026-10-21 10:00:00' }, { id: '78', agentId: '6224', status: 'failed', mediaType: 2, failedReasonShort: 'busy' }] });
+    if (wp === '/ai-api/ai/storage/upload' || wp === '/ai-api/ai/detector/frame/upload') { state.uploads = (state.uploads || 0) + 1; return res(200, { code: 1, files: [{ fileKey: wp.includes('frame') ? 'frame-key' : 'file-key' }] }); }
+    if (wp === '/ai-api/ai/detector/analyze') return res(200, { code: 1, aiGenerated: { availability: 'available', score: 0.91 }, deepfake: { availability: 'available', score: 0.04 }, summary: 'Likely AI-generated' });
+    if (wp === '/ai-api/ai/media/list/myCreation') return res(200, { code: 1, records: [{ id: '76', agentId: '6249', status: 'success', mediaType: 1, outputFileUrl: 'https://cdn.example/mine.png' }, { id: '77', agentId: '6233', status: 'success', mediaType: 4, outputFileUrl: 'https://cdn.example/m.glb', createAt: '2026-10-21 10:00:00' }, { id: '78', agentId: '6224', status: 'failed', mediaType: 2, failedReasonShort: 'busy' }] });
     if (wp === '/ai-api/ai/heygen/quotes/video') return res(200, { data: { currency: 'usd', estimated_amount: 0.25 } });
     if (wp === '/ai-api/ai/heygen/videos') return res(200, { operation: { id: 'op1', status: 'pending', kind: 'create_video', billing_status: 'reserved' } });
     if (wp.startsWith('/ai-api/ai/heygen/operations/')) return res(200, { operation: { id: 'op1', status: 'succeeded' }, data: { video_url: 'https://cdn.example/heygen.mp4' } });
@@ -44,12 +46,13 @@ globalThis.fetch = async (url, init = {}) => {
     if (state.webPay) return res(200, { code: 402, message: 'pay', data: { subCode: 4002 } });
     return res(200, { code: 1, taskId: 'w1' });
   }
+  if (url.startsWith('https://cdn.example/')) return new Response(new Uint8Array([137, 80, 78, 71]), { status: 200, headers: { 'Content-Type': 'image/png', 'Content-Length': '4' } });
   if (!url.startsWith(API)) return err(404, 'wrong_host');
   if (state.keyBad || init.headers?.Authorization !== `Bearer ${KEY}`) return err(401, 'invalid_api_key');
   const p = u.pathname.replace('/ai-api/open/v1', '');
   if (p === '/models' && init.method === 'GET') return res(200, { object: 'list', data: [{ id: 'nano-banana-2.1', type: u.searchParams.get('type') || 'image', price: { '1K': 200 } }, { id: 'kling-v3', type: 'video' }] });
   if (p.startsWith('/models/')) return /\/(nope|claude-opus-5\.5|heygen-video)$/.test(p) ? err(404, 'model_not_found', 'Unknown model') : res(200, { id: decodeURIComponent(p.slice(8)), parameters: { resolution: ['1K', '2K'] } });
-  if (p === '/tasks/estimate' && ['hidream-o1', 'kling-o1', 'heygen-video', 'video-upscale', 'tripo-h3.1', 'wan-2.6', 'ideogram-4.5', 'scribe-v2', 'made-up-media', 'ai-poster', 'ai-product-images', 'midjourney', 'ideogram-3.0', 'video-translate', 'talking-photo', 'meshy-7', 'wan-2.7', 'seedance-1.0-pro'].includes(body.model)) return err(404, 'model_not_found', `Unknown model ${body.model}`);
+  if (p === '/tasks/estimate' && ['hidream-o1', 'kling-o1', 'heygen-video', 'video-upscale', 'tripo-h3.1', 'wan-2.6', 'ideogram-4.5', 'scribe-v2', 'made-up-media', 'ai-poster', 'ai-product-images', 'midjourney', 'ideogram-3.0', 'video-translate', 'talking-photo', 'meshy-7', 'wan-2.7', 'seedance-1.0-pro', 'ai-image-detector', 'ai-video-detector'].includes(body.model)) return err(404, 'model_not_found', `Unknown model ${body.model}`);
   if (p === '/tasks/estimate') {
     if (state.estimateStatus !== 200) return err(state.estimateStatus, state.estimateStatus === 402 ? 'insufficient_credit' : 'invalid_request', 'nope');
     return res(200, { credits: state.price, billing_model: `${body.model}-tier` });
@@ -396,13 +399,37 @@ reset();
 r = await tool(env({ GLBGPT_API_KEY: ` Bearer ${KEY}\n` }), 'glbgpt_list_models', {});
 check('key pasted with "Bearer " and newline still works', !r.err);
 
-console.log(failures ? `\n${failures} FAILED` : '\nall passed');
-process.exit(failures ? 1 : 0);
 
 // usage: website generations and released credits
 reset();
 r = await tool(envT(), 'glbgpt_usage', { recent: 5 });
-check('usage lists website generations', !r.err && Array.isArray(r.json.recent_website) && r.json.recent_website[0].model === 'tripo-h3.1' && r.json.recent_website[0].type === '3d' && r.json.recent_website[0].task_id === 'web:77' && r.json.recent_website[1].reason === 'busy');
+check('usage lists website generations', !r.err && Array.isArray(r.json.recent_website) && r.json.recent_website.find((x) => x.task_id === 'web:77').model === 'tripo-h3.1' && r.json.recent_website.find((x) => x.task_id === 'web:77').type === '3d' && r.json.recent_website.find((x) => x.task_id === 'web:78').reason === 'busy' && /^2026-/.test(r.json.recent_website[0].created ?? '2026-'));
 r = await tool(env(), 'glbgpt_usage', { recent: 5 });
 check('usage without token: no website list', !r.err && r.json.recent_website === undefined);
 check('failed task in usage: 0 credits, reservation shown as released', r.json.recent.find((t) => t.task_id === 't-f').credits === 0 && r.json.recent.find((t) => t.task_id === 't-f').credits_released === 45);
+
+// detectors
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'ai-image-detector', images: ['https://cdn.example/other.png'] });
+const an = calls.find((c) => c.path === '/ai-api/ai/detector/analyze').body;
+check('image detector: upload, analyze, scores back directly', !r.err && r.json.status === 'succeeded' && r.json.ai_generated === 0.91 && r.json.deepfake === 0.04 && r.json.summary === 'Likely AI-generated' && an.mediaFileKey === 'file-key' && an.mediaSource === 'uploaded' && an.mediaType === 'IMAGE' && an.agentId === '6200');
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'ai-image-detector', images: ['https://cdn.example/mine.png'] });
+const an2 = calls.find((c) => c.path === '/ai-api/ai/detector/analyze').body;
+check('image detector: own creation analysed by id, no upload', !r.err && an2.mediaId === '76' && an2.mediaSource === 'generated' && !calls.some((c) => c.path === '/ai-api/ai/storage/upload'));
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'ai-image-detector', images: ['data:image/png;base64,iVBORw0KGgo='] });
+check('image detector: data: URI uploaded', !r.err && r.json.ai_generated === 0.91 && calls.some((c) => c.path === '/ai-api/ai/storage/upload'));
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'ai-video-detector', video_url: 'https://cdn.example/v.mp4', duration: 5, images: ['https://cdn.example/f.png'], metadata: { frame_ms: 1500 } });
+const av = calls.find((c) => c.path === '/ai-api/ai/detector/analyze').body;
+check('video detector: video + frame uploaded, frame time, duration', !r.err && av.mediaType === 'VIDEO' && av.frameFileKey === 'frame-key' && av.frameTimestampMs === 1500 && av.durationSeconds === 5 && r.json.frame_ms === 1500);
+r = await tool(envT(), 'glbgpt_generate', { model: 'ai-video-detector', video_url: 'https://cdn.example/v.mp4', duration: 5 });
+check('video detector without a frame -> asks for one', r.err && r.text.includes('still frame'));
+r = await tool(envT(), 'glbgpt_generate', { model: 'ai-video-detector', video_url: 'https://cdn.example/v.mp4', duration: 90, images: ['https://cdn.example/f.png'] });
+check('video detector over 60 s refused', r.err && r.text.includes('60 seconds'));
+r = await tool(envT(), 'glbgpt_list_models', { type: 'detector' });
+check('list models type detector -> the two detectors', !r.err && r.json.models.length === 2 && r.json.models.every((m) => m.type === 'detector' && m.usage && m.price));
+
+console.log(failures ? `\n${failures} FAILED` : '\nall passed');
+process.exit(failures ? 1 : 0);
