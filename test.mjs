@@ -18,7 +18,7 @@ const KV = { get: async (k) => kvStore.get(k) ?? null, put: async (k, v) => { kv
 // Fake GlobalGPT API
 const calls = [];
 const state = {};
-const defaults = { price: 200, reserved: undefined, polls: 0, pollsUntilDone: 0, fail: null, submitStatus: 200, submitNetErrors: 0, keyBad: false, chatJsonReject: false, estimateStatus: 200, webPay: false, webFail: false, webPolls: 0, webPollsUntilDone: 0 };
+const defaults = { price: 200, reserved: undefined, polls: 0, pollsUntilDone: 0, fail: null, submitStatus: 200, submitNetErrors: 0, keyBad: false, chatJsonReject: false, estimateStatus: 200, webPay: false, webFail: false, webPolls: 0, webPollsUntilDone: 0, webMediaType: 0 };
 const res = (status, d, headers = {}) => new Response(JSON.stringify(d), { status, headers: { 'Content-Type': 'application/json', ...headers } });
 const err = (status, code, message = code) => res(status, { error: { message, type: code, code } });
 globalThis.fetch = async (url, init = {}) => {
@@ -35,7 +35,8 @@ globalThis.fetch = async (url, init = {}) => {
   if (url.startsWith('https://api2.glbgpt.com/ai-api/') && !url.startsWith(API) && !url.endsWith('/agent/chatStream')) {
     if (init.headers?.Authorization !== `Bearer ${TOKEN}`) return res(200, { code: 401, message: 'token invalid' });
     const wp = u.pathname;
-    if (wp === '/ai-api/ai/task/get') { state.webPolls = (state.webPolls || 0) + 1; return res(200, state.webFail ? { code: 1, task: { status: 'failed', failedReason: 'nsfw', errorCode: 'X' } } : state.webPolls > (state.webPollsUntilDone || 0) ? { code: 1, task: { status: 'success', outputFileUrl: 'https://cdn.example/web.png', mediaType: 1 } } : { code: 1, task: { status: 'processing' } }); }
+    if (wp === '/ai-api/ai/task/get') { state.webPolls = (state.webPolls || 0) + 1; return res(200, state.webFail ? { code: 1, task: { status: 'failed', failedReason: 'nsfw', errorCode: 'X' } } : state.webPolls > (state.webPollsUntilDone || 0) ? { code: 1, task: { status: 'success', outputFileUrl: 'https://cdn.example/web.png', mediaType: state.webMediaType || 1 } } : { code: 1, task: { status: 'processing' } }); }
+    if (wp === '/ai-api/ai/media/list/myCreation') return res(200, { code: 1, records: [{ id: '77', agentId: '6233', status: 'success', mediaType: 4, outputFileUrl: 'https://cdn.example/m.glb', createAt: '2026-10-21 10:00:00' }, { id: '78', agentId: '6224', status: 'failed', mediaType: 2, failedReasonShort: 'busy' }] });
     if (wp === '/ai-api/ai/heygen/quotes/video') return res(200, { data: { currency: 'usd', estimated_amount: 0.25 } });
     if (wp === '/ai-api/ai/heygen/videos') return res(200, { operation: { id: 'op1', status: 'pending', kind: 'create_video', billing_status: 'reserved' } });
     if (wp.startsWith('/ai-api/ai/heygen/operations/')) return res(200, { operation: { id: 'op1', status: 'succeeded' }, data: { video_url: 'https://cdn.example/heygen.mp4' } });
@@ -59,7 +60,7 @@ globalThis.fetch = async (url, init = {}) => {
     if (state.submitStatus === 429) return err(429, 'rate_limit_exceeded', 'slow down');
     return res(200, { id: 't-1', object: 'task', model: body.model, type: 'image', status: 'queued', credits_reserved: state.reserved ?? state.price, ...(body.bogus ? { ignored_parameters: { bogus: 1 } } : {}) });
   }
-  if (p === '/tasks' && init.method === 'GET') return res(200, { object: 'list', data: [{ id: 't-0', model: 'kling-v3', type: 'video', status: 'succeeded', credits_reserved: 500, output: { url: 'https://cdn.example/v.mp4' } }] });
+  if (p === '/tasks' && init.method === 'GET') return res(200, { object: 'list', data: [{ id: 't-0', model: 'kling-v3', type: 'video', status: 'succeeded', credits_reserved: 500, output: { url: 'https://cdn.example/v.mp4' } }, { id: 't-f', model: 'agnes-video-v2.0', type: 'video', status: 'failed', credits_reserved: 45 }] });
   if (p.startsWith('/tasks/')) {
     state.polls++;
     if (p === '/tasks/unknown') return err(404, 'not_found', 'task not found');
@@ -202,10 +203,11 @@ const vu = calls.find((c) => c.path === '/ai-api/ai/video-tools/task/submit').bo
 check('video tool: video + duration, price per second (1247)', !r.err && vu.video === 'https://x.example/v.mp4' && vu.durationSeconds === 10 && r.json.credits_estimated === 1247);
 r = await tool(envT(), 'glbgpt_generate', { model: 'video-upscale', video_url: 'https://x.example/v.mp4' });
 check('video tool without duration -> asks for it', r.err && r.text.includes('duration'));
-reset();
+reset({ webMediaType: 4 });
 r = await tool(envT(), 'glbgpt_generate', { model: 'tripo-h3.1', prompt: 'a chair', metadata: { quad: true } });
 const td = calls.find((c) => c.path === '/ai-api/ai/3d/task/submit').body;
 check('3D: prompt + options, website price (textured 660 + quad 170 = 830)', !r.err && td.model === 'tripo-h3.1' && td.prompt === 'a chair' && td.quad === true && r.json.credits_estimated === 830);
+check('3D result labelled 3d', !r.err && r.json.type === '3d');
 reset();
 r = await tool(envT(), 'glbgpt_generate', { model: 'tripo-h3.1', prompt: 'a chair', metadata: { texture: false } });
 check('tripo without texture -> 330', !r.err && r.json.credits_estimated === 330);
@@ -396,3 +398,11 @@ check('key pasted with "Bearer " and newline still works', !r.err);
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);
+
+// usage: website generations and released credits
+reset();
+r = await tool(envT(), 'glbgpt_usage', { recent: 5 });
+check('usage lists website generations', !r.err && Array.isArray(r.json.recent_website) && r.json.recent_website[0].model === 'tripo-h3.1' && r.json.recent_website[0].type === '3d' && r.json.recent_website[0].task_id === 'web:77' && r.json.recent_website[1].reason === 'busy');
+r = await tool(env(), 'glbgpt_usage', { recent: 5 });
+check('usage without token: no website list', !r.err && r.json.recent_website === undefined);
+check('failed task in usage: 0 credits, reservation shown as released', r.json.recent.find((t) => t.task_id === 't-f').credits === 0 && r.json.recent.find((t) => t.task_id === 't-f').credits_released === 45);

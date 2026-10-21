@@ -219,7 +219,7 @@ The connector sends the same fields the website's own form sends (checked agains
 | Speech to text | Scribe v2 | `scribe-v2` | 12 per minute | ✅ works (returns a .txt transcript) |
 | Speech to text | Scribe v1 | `scribe-v1` | 12 per minute | ✅ works (returns a .txt transcript) |
 
-Known connector issues found in the live test: `glbgpt_check_task` reports 3D results as `type: "image"`, and `glbgpt_usage` lists only API generations, not website ones. (Fixed since: AI Poster text blocks, Kling O1 lengths, Wan 2.6 sizes, and website errors no longer say "refused the chat".)
+Issues found in the live test and fixed the same day: AI Poster text blocks, Kling O1 lengths, Wan 2.6 sizes, website errors that said "refused the chat", 3D results labelled `image`, failed tasks shown with their (released) reservation as spent, and `glbgpt_usage` not listing website generations (now under `recent_website`).
 
 ## Not supported
 

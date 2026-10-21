@@ -576,14 +576,34 @@ async function webRequest(env, method, url, body) {
   return data;
 }
 
+// The account's recent website generations (website-only models; the API's list doesn't have them).
+async function websiteRecent(env, n) {
+  const data = await webRequest(env, "POST", `${WEB}/ai-api/ai/media/list/myCreation`, { page: 1, size: n, status: "all", productNo: "glbgpt" });
+  const records = data?.records ?? data?.data?.records ?? [];
+  const byAgent = Object.fromEntries(Object.entries(WEBSITE_MEDIA_MODELS).map(([id, w]) => [String(w.agentId), id]));
+  return records.slice(0, n).map((r) => defined({
+    task_id: r.id !== undefined ? `web:${r.id}` : undefined,
+    status: r.status === "success" ? "succeeded" : r.status,
+    model: byAgent[String(r.agentId)] ?? r.modelName ?? r.agentName ?? r.model,
+    type: MEDIA_TYPES[r.mediaType],
+    url: str(r.outputFileUrl),
+    credits: typeof r.points === "number" ? r.points : typeof r.credits === "number" ? r.credits : undefined,
+    created: r.createAt ?? r.createTime,
+    reason: r.status === "failed" ? str(r.failedReasonShort) ?? str(r.failedReason) : undefined,
+  }));
+}
+
 const webTaskId = (data) => data?.taskId ?? data?.data?.taskId ?? data?.data?.id;
+
+// The website's media types (1 image, 2 video, 3 audio and transcripts, 4 3D).
+const MEDIA_TYPES = { 1: "image", 2: "video", 3: "audio", 4: "3d" };
 
 // One website task's state, in the same shape as the API's task view.
 async function webTask(env, id) {
   const data = await webRequest(env, "POST", `${WEB}/ai-api/ai/task/get`, { taskId: id });
   const t = data?.task;
   if (!t) throw new ToolError(`No website task found with id ${id}.`);
-  if (t.status === "success") return { status: "succeeded", url: t.outputFileUrl, type: t.mediaType === 2 ? "video" : t.mediaType === 3 ? "audio" : "image" };
+  if (t.status === "success") return { status: "succeeded", url: t.outputFileUrl, type: MEDIA_TYPES[t.mediaType] ?? "image" };
   if (t.status === "failed") return { status: "failed", reason: str(t.failedReasonShort) ?? str(t.failedReason) ?? str(t.errorCode) ?? "The generation failed." };
   return { status: "processing" };
 }
@@ -820,7 +840,7 @@ const TOOLS = [
   {
     name: "glbgpt_usage",
     title: "GlobalGPT usage",
-    description: "This connector's daily credit limit and today's spend, plus the most recent generations on the GlobalGPT account with their status and credits.",
+    description: "This connector's daily credit limit and today's spend, plus the most recent generations on the GlobalGPT account with their status and credits (recent: API generations; recent_website: website-only models, when GLBGPT_TOKEN is set). A failed task shows credits 0: its reservation is given back.",
     inputSchema: {
       type: "object",
       properties: { recent: { type: "integer", minimum: 0, maximum: 50, description: "How many recent generations to show (default 10)." } },
@@ -852,7 +872,11 @@ function buildTaskBody(a) {
 function taskView(t) {
   const out = { task_id: String(t.id ?? ""), status: t.status, model: t.model, type: t.type };
   if (t.output?.url) out.url = t.output.url;
-  if (t.credits_reserved !== undefined) out.credits = t.credits_reserved;
+  // A failed task's reservation is given back (GlobalGPT's usage page shows no charge), so don't show it as spent.
+  if (t.credits_reserved !== undefined) {
+    if (t.status === "failed") Object.assign(out, { credits: 0, credits_released: t.credits_reserved });
+    else out.credits = t.credits_reserved;
+  }
   if (t.ignored_parameters && Object.keys(t.ignored_parameters).length) out.ignored_parameters = t.ignored_parameters;
   return out;
 }
@@ -1045,12 +1069,19 @@ const handlers = {
   async glbgpt_usage(ctx, a) {
     const limit = new CreditLimit(ctx.env);
     const n = Number.isInteger(a.recent) ? a.recent : 10;
-    let recent;
+    let recent, recentWebsite;
     if (n > 0) {
       try {
         recent = list(await new GlobalGPT(ctx.env).tasks(n)).map(taskView);
       } catch (e) {
         recent = `Couldn't load recent generations: ${e.message}`;
+      }
+      if (ctx.env.GLBGPT_TOKEN) {
+        try {
+          recentWebsite = await websiteRecent(ctx.env, n);
+        } catch (e) {
+          recentWebsite = `Couldn't load recent website generations: ${e.message}`;
+        }
       }
     }
     return {
@@ -1058,6 +1089,7 @@ const handlers = {
       spent_today_via_connector: await limit.spent(),
       limit_resets: `midnight ${LIMIT_TIMEZONE}`,
       ...(recent !== undefined ? { recent } : {}),
+      ...(recentWebsite !== undefined ? { recent_website: recentWebsite } : {}),
       balance: "GlobalGPT's API doesn't report the credit balance; see the Usage page on glbgpt.com.",
     };
   },
