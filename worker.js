@@ -169,6 +169,7 @@ async function websiteChat(env, agentId, query) {
       headers: { Authorization: `Bearer ${env.GLBGPT_TOKEN}`, "Content-Type": "application/json", Accept: "text/event-stream", "User-Agent": UA },
       body: JSON.stringify({
         device: { deviceType: "pc" },
+        productNo: "glbgpt", // some agents refuse the call without it ("invalid product no null")
         inputs: { thinking_patch: true, enableImages: false, deep_research: false, study: false, enableDeepThink: false },
         enableSearch: false, agentId, query, conversationId: "", parentMessageId: "", files: [], chatTaskId: crypto.randomUUID(),
       }),
@@ -209,6 +210,7 @@ async function websiteChat(env, agentId, query) {
     }
   }
   handle(buffer.trim());
+  answer = answer.replace(/<think>[\s\S]*?<\/think>\s*/g, "").trim(); // some models stream their reasoning inline
   return { answer, usage, debug: answer ? undefined : { events: [...seen], start: raw.slice(0, 1200) } };
 }
 
@@ -533,7 +535,12 @@ const handlers = {
       const query = [system, prompt].filter(Boolean).join("\n\n");
       const out = await websiteChat(ctx.env, web.agentId, query);
       if (schema) return parseJsonAnswer(out.answer);
-      if (!out.answer) throw new ToolError(`${web.name} returned an empty answer. Events received: ${JSON.stringify(out.debug)}`);
+      if (!out.answer) {
+        const reason = out.debug?.start?.match(/"reason":"([^"]+)"/)?.[1];
+        throw new ToolError(reason === "upstream_transport_failed"
+          ? `${web.name} is currently not answering on GlobalGPT's website (their backend couldn't reach the provider). Try again later or pick another model.`
+          : `${web.name} returned an empty answer. Events received: ${JSON.stringify(out.debug)}`);
+      }
       return { model: web.id, answer: out.answer, via: "website", ...(out.usage ? { usage: out.usage } : {}) };
     }
     const answer = res?.choices?.[0]?.message?.content ?? "";
