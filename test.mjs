@@ -32,11 +32,12 @@ globalThis.fetch = async (url, init = {}) => {
     if (body.query.includes('JSON Schema')) sse[0] = 'data:{"event":"message","answer":""}\n\n';
     return new Response(new ReadableStream({ start(c) { for (const l of sse) c.enqueue(new TextEncoder().encode(l)); c.close(); } }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
   }
-  if (url.startsWith('https://api2.glbgpt.com/ai-api/') && !url.startsWith(API) && !url.endsWith('/agent/chatStream')) {
+  if ((url.startsWith('https://api2.glbgpt.com/ai-api/') || url.startsWith('https://api2.glbgpt.com/user-api/')) && !url.startsWith(API) && !url.endsWith('/agent/chatStream')) {
     if (init.headers?.Authorization !== `Bearer ${TOKEN}`) return res(200, { code: 401, message: 'token invalid' });
     const wp = u.pathname;
     if (wp === '/ai-api/ai/task/get') { state.webPolls = (state.webPolls || 0) + 1; return res(200, state.webFail ? { code: 1, task: { status: 'failed', failedReason: 'nsfw', errorCode: 'X' } } : state.webPolls > (state.webPollsUntilDone || 0) ? { code: 1, task: { status: 'success', outputFileUrl: 'https://cdn.example/web.png', mediaType: state.webMediaType || 1 } } : { code: 1, task: { status: 'processing' } }); }
     if (wp === '/ai-api/ai/storage/upload' || wp === '/ai-api/ai/detector/frame/upload') { state.uploads = (state.uploads || 0) + 1; return res(200, { code: 1, files: [{ fileKey: wp.includes('frame') ? 'frame-key' : 'file-key' }] }); }
+    if (wp === '/user-api/api/user/bill/list') return res(200, { code: 1, data: { list: [{ direction: 'decrease', model: 'ai-video-detector', display_name: 'AI Video Detector', cost: 0, original_cost: 20, source_type: 'chat_usage', created_at: '2026-10-21' }, { direction: 'increase', cost: 130, source_type: 'daily_checkin', category_name: 'Daily Check-in Reward', created_at: '2026-10-21' }] } });
     if (wp === '/ai-api/ai/assets/list') return res(200, { code: 1, data: { next_cursor: null, items: body.source_type === 'UPLOADS' ? [{ asset_id: 'up1', url: 'https://static.futureshareai.com/u/file-key.png', source_type: 'UPLOAD_FILE', media_type: 1 }] : [{ asset_id: 'a76', url: 'https://cdn.example/mine.png', source_type: 'CREATED', media_type: 1 }, { asset_id: 'a90', url: 'https://static.futureshareai.com/v/clip.mp4', source_type: 'CREATED', media_type: 2 }] } });
     if (wp === '/ai-api/ai/detector/analyze') return res(200, { code: 1, aiGenerated: { availability: 'available', score: 0.91 }, deepfake: { availability: 'available', score: 0.04 }, summary: 'Likely AI-generated' });
     if (wp === '/ai-api/ai/media/list/myCreation') return res(200, { code: 1, records: [{ id: '76', agentId: '6249', status: 'success', mediaType: 1, outputFileUrl: 'https://cdn.example/mine.png' }, { id: '77', agentId: '6233', status: 'success', mediaType: 4, outputFileUrl: 'https://cdn.example/m.glb', createAt: '2026-10-21 10:00:00' }, { id: '78', agentId: '6224', status: 'failed', mediaType: 2, failedReasonShort: 'busy' }] });
@@ -53,7 +54,7 @@ globalThis.fetch = async (url, init = {}) => {
   const p = u.pathname.replace('/ai-api/open/v1', '');
   if (p === '/models' && init.method === 'GET') return res(200, { object: 'list', data: [{ id: 'nano-banana-2.1', type: u.searchParams.get('type') || 'image', price: { '1K': 200 } }, { id: 'kling-v3', type: 'video' }] });
   if (p.startsWith('/models/')) return /\/(nope|claude-opus-5\.5|heygen-video)$/.test(p) ? err(404, 'model_not_found', 'Unknown model') : res(200, { id: decodeURIComponent(p.slice(8)), parameters: { resolution: ['1K', '2K'] } });
-  if (p === '/tasks/estimate' && ['hidream-o1', 'kling-o1', 'heygen-video', 'video-upscale', 'tripo-h3.1', 'wan-2.6', 'ideogram-4.5', 'scribe-v2', 'made-up-media', 'ai-poster', 'ai-product-images', 'midjourney', 'ideogram-3.0', 'video-translate', 'talking-photo', 'meshy-7', 'wan-2.7', 'seedance-1.0-pro', 'ai-image-detector', 'ai-video-detector'].includes(body.model)) return err(404, 'model_not_found', `Unknown model ${body.model}`);
+  if (p === '/tasks/estimate' && ['hidream-o1', 'kling-o1', 'heygen-video', 'video-upscale', 'tripo-h3.1', 'wan-2.6', 'ideogram-4.5', 'scribe-v2', 'made-up-media', 'ai-poster', 'ai-product-images', 'midjourney', 'ideogram-3.0', 'video-translate', 'talking-photo', 'meshy-7', 'wan-2.7', 'seedance-1.0-pro', 'ai-image-detector', 'ai-video-detector', 'wan3.0-video-prime'].includes(body.model)) return err(404, 'model_not_found', `Unknown model ${body.model}`);
   if (p === '/tasks/estimate') {
     if (state.estimateStatus !== 200) return err(state.estimateStatus, state.estimateStatus === 402 ? 'insufficient_credit' : 'invalid_request', 'nope');
     return res(200, { credits: state.price, billing_model: `${body.model}-tier` });
@@ -186,7 +187,7 @@ check('website image: list price counted (133)', r.json.credits_estimated === 13
 reset({ webPollsUntilDone: 99 });
 r = await tool(envT({ DAILY_CREDIT_LIMIT: '5000' }), 'glbgpt_generate', { model: 'kling-o1', prompt: 'orbit @Image1', duration: 10, images: ['https://x.example/a.png'] });
 const ko = calls.find((c) => c.path === '/ai-api/ai/klingO1/task/submit').body;
-check('website video: still running -> web task id + approximate price note', !r.err && r.json.status === 'processing' && r.json.task_id === 'web:w1' && r.json.price_note && r.json.credits_estimated === 2000);
+check('website video: still running -> web task id, table price (kling o1 720p 10 s = 2000)', !r.err && r.json.status === 'processing' && r.json.task_id === 'web:w1' && !r.json.price_note && r.json.credits_estimated === 2000);
 check('kling o1 body: @Image1 rewritten, images as JSON string, duration', ko.prompt === 'orbit <<<image_1>>>' && ko.imageUrls === '["https://x.example/a.png"]' && ko.duration === 10);
 state.webPollsUntilDone = 0;
 r = await tool(envT(), 'glbgpt_check_task', { task_id: 'web:w1' });
@@ -432,6 +433,20 @@ r = await tool(envT(), 'glbgpt_generate', { model: 'ai-video-detector', video_ur
 check('video detector over 60 s refused', r.err && r.text.includes('60 seconds'));
 r = await tool(envT(), 'glbgpt_list_models', { type: 'detector' });
 check('list models type detector -> the two detectors', !r.err && r.json.models.length === 2 && r.json.models.every((m) => m.type === 'detector' && m.usage && m.price));
+
+// website price tables, credit records
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'wan-2.6', prompt: 'x' });
+check('wan 2.6 720P 5 s = 900 (as charged)', !r.err && r.json.credits_estimated === 900);
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'wan3.0-video-prime', prompt: 'x', duration: 2, resolution: '480P' });
+check('wan 3.0 prime 480P 2 s = 300 (as charged)', !r.err && r.json.credits_estimated === 300);
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'kling-o1', prompt: 'x', video_url: 'https://x.example/v.mp4', duration: 4 });
+check('kling o1 video edit 720p 4 s = 1200', !r.err && r.json.credits_estimated === 1200);
+r = await tool(envT(), 'glbgpt_usage', { recent: 3 });
+const cr = r.json.credit_records;
+check('usage: credit records with list price and income', !r.err && cr[0].what === 'AI Video Detector' && cr[0].credits === 0 && cr[0].list_price === 20 && cr[1].credits === 130);
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

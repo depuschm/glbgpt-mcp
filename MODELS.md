@@ -189,13 +189,13 @@ Images, videos, tools, 3D and speech to text that only glbgpt.com has. `glbgpt_g
 
 The connector sends the same fields the website's own form sends (checked against the website's code and settings on 21 October 2026), and every `metadata` key is passed on as is, so any option the website offers can be set. `metadata.enhancePrompt: true` turns on the website's prompt enhancer (off by default). `glbgpt_list_models` with `model` set lists each model's options and allowed values.
 
-**Status: tested live on 21 October 2026** with one generation each at the cheapest settings. Prices are the website's list prices; for videos they're estimates (GlobalGPT bills the exact amount).
+**Status: tested live on 21 October 2026** with one generation each at the cheapest settings. Prices are the website's list prices and price tables, checked against the account's real charges on 21 October 2026 (`glbgpt_usage` now shows those charges under `credit_records`). Talking Photo bills the length of the spoken audio, so its estimate can be low.
 
 | Kind | Model | ID | From (credits) | Live test |
 |---|---|---|---|---|
 | Image | Ideogram 4.5 | `ideogram-4.5` | 27 (very low) to 730 | ✅ works (`metadata.quality` low, 100) |
 | Image | Ideogram 3.0 / Turbo / Quality | `ideogram-3.0` / `ideogram-3.0-turbo` / `ideogram-3.0-quality` | 200 / 100 / 300 | ✅ all three work |
-| Image | Midjourney | `midjourney` | 100 | ✅ works (returns the 2x2 grid) |
+| Image | Midjourney | `midjourney` | 150 charged (website lists 100) | ✅ works (returns the 2x2 grid) |
 | Image | MAI Image 2.6 / 2.6 Flash | `mai-image-2.6` / `mai-image-2.6-flash` | 104 / 52 | ✅ both work |
 | Image | Krea 3 | `krea-3` | 25 (0.5K) | ✅ works (0.5K) |
 | Image | Qwen Image 3.0 / 3.0 Pro | `qwen-image-3.0` / `qwen-image-3.0-pro` | 100 / 133 | ✅ both work |
@@ -218,8 +218,8 @@ The connector sends the same fields the website's own form sends (checked agains
 | 3D | Hunyuan 3D 3.1 / Tripo h3.1 / Meshy 7 / TRELLIS 3D / Rodin Gen-2 | `hunyuan-3d-3.1` / `tripo-h3.1` / `meshy-7` / `trellis-3d` / `rodin-gen-2` | 100 / 330 untextured, 660 textured (default) / 1,760 preview, 2,640 full (default) / 500 / 1,400 | ✅ all five work (GLB) |
 | Speech to text | Scribe v2 | `scribe-v2` | 12 per minute | ✅ works (returns a .txt transcript) |
 | Speech to text | Scribe v1 | `scribe-v1` | 12 per minute | ✅ works (returns a .txt transcript) |
-| Detector | AI Image Detector | `ai-image-detector` | not shown on the website | added 21 Oct evening, see below |
-| Detector | AI Video Detector | `ai-video-detector` | not shown on the website | added 21 Oct evening, see below |
+| Detector | AI Image Detector | `ai-image-detector` | 20 | ✅ works (image URL or data: URI; added to the media library if needed; scores come back directly) |
+| Detector | AI Video Detector | `ai-video-detector` | 20 (0 during a current discount) | ✅ works (checks one frame, cut automatically for videos on GlobalGPT; `metadata.frame_ms`) |
 
 Issues found in the live test and fixed the same day: AI Poster text blocks, Kling O1 lengths, Wan 2.6 sizes, website errors that said "refused the chat", 3D results labelled `image`, failed tasks shown with their (released) reservation as spent, and `glbgpt_usage` not listing website generations (now under `recent_website`).
 

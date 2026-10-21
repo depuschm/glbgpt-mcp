@@ -302,6 +302,36 @@ function mjPrompt(a) {
   if (["8", "8.2"].includes(version)) prompt = `${prompt.replace(/--hd\b/gi, "").replace(/\s{2,}/g, " ").trim()} --hd`;
   return { prompt, version, aspect };
 }
+// Video price tables from the website (credits by resolution and seconds), checked against real charges on 21 Oct 2026.
+const range = (from, to, f) => Object.fromEntries(Array.from({ length: to - from + 1 }, (_, i) => [from + i, f(from + i)]));
+const PRICE_TABLES = {
+  "wan3.0-video-prime": {
+    "480P": { 2: 300, 3: 500, 4: 600, 5: 800, 6: 1000, 7: 1100, 8: 1300, 9: 1400, 10: 1600, 11: 1700, 12: 1900, 13: 2100, 14: 2200, 15: 2400, 16: 2500, 17: 2700, 18: 2900, 19: 3000, 20: 3200, 21: 3300, 22: 3500, 23: 3600, 24: 3800, 25: 4000, 26: 4100, 27: 4300, 28: 4400, 29: 4600, 30: 4800 },
+    "720P": { 2: 700, 3: 1000, 4: 1300, 5: 1600, 6: 2000, 7: 2300, 8: 2600, 9: 2900, 10: 3300, 11: 3600, 12: 3900, 13: 4200, 14: 4600, 15: 4900, 16: 5200, 17: 5500, 18: 5900, 19: 6200, 20: 6500, 21: 6900, 22: 7200, 23: 7500, 24: 7800, 25: 8200, 26: 8500, 27: 8800, 28: 9100, 29: 9500, 30: 9800 },
+    "1080P": { 2: 1300, 3: 2000, 4: 2600, 5: 3300, 6: 3900, 7: 4600, 8: 5200, 9: 5900, 10: 6500, 11: 7200, 12: 7800, 13: 8500, 14: 9100, 15: 9800, 16: 10400, 17: 11100, 18: 11700, 19: 12400, 20: 13100, 21: 13700, 22: 14400, 23: 15000, 24: 15700, 25: 16300, 26: 17000, 27: 17600, 28: 18300, 29: 18900, 30: 19600 },
+  },
+  "wan-2.7": {
+    "720P": { 2: 400, 3: 500, 4: 700, 5: 900, 6: 1000, 7: 1200, 8: 1400, 9: 1500, 10: 1700, 11: 1900, 12: 2000, 13: 2200, 14: 2400, 15: 2500 },
+    "1080P": { 2: 500, 3: 800, 4: 1000, 5: 1300, 6: 1500, 7: 1800, 8: 2000, 9: 2300, 10: 2500, 11: 2800, 12: 3000, 13: 3300, 14: 3500, 15: 3800 },
+  },
+  "kling-o1": {
+    "720p": { 5: 1000, 10: 2000 }, "1080p": { 5: 1400, 10: 2800 },
+    "720p-v2v": range(3, 10, (s) => 300 * s), "1080p-v2v": range(3, 10, (s) => 400 * s),
+  },
+  "wan-2.6": {
+    "720P": { 5: 900, 10: 1700, 15: 2500 }, "1080P": { 5: 1300, 10: 2500, 15: 3800 },
+    "720P-r2v": { 5: 1700, 10: 3400 }, "1080P-r2v": { 5: 2500, 10: 5000 },
+  },
+  "seedance-1.0-pro": { "": { 5: 2000, 10: 4000 } },
+};
+// Look the price up; between table steps, round up to the next listed length.
+function tablePrice(id, tier, seconds) {
+  const t = PRICE_TABLES[id]?.[tier];
+  if (!t) return 0;
+  const key = Object.keys(t).map(Number).sort((x, y) => x - y).find((k) => k >= seconds) ?? Math.max(...Object.keys(t).map(Number));
+  return t[key];
+}
+
 // 3D prices that depend on the options (the website's own formula, in credits).
 function meshyCredits(a) {
   const m = meta(a);
@@ -410,7 +440,7 @@ const WEBSITE_MEDIA_MODELS = {
   "hidream-i1-full": hidream("6246", "hidream-i1-full", "HiDream I1 Full", 80, { noImages: true }),
   "hidream-i1-dev": hidream("6245", "hidream-i1-dev", "HiDream I1 Dev", 40, { noImages: true }),
   "midjourney": {
-    name: "Midjourney", type: "image", agentId: 4115, path: "/ai-api/ai/zeakai/mj/submit/imagine", credits: () => 100, wrap: "image_request",
+    name: "Midjourney", type: "image", agentId: 4115, path: "/ai-api/ai/zeakai/mj/submit/imagine", credits: () => 150, // charged 150 in the live test (the website lists 100) wrap: "image_request",
     body: (a) => {
       const m = meta(a);
       const { prompt, version, aspect } = mjPrompt(a);
@@ -439,7 +469,8 @@ const WEBSITE_MEDIA_MODELS = {
     body: (a) => ({ model: "veo3", prompt: a.prompt, seed: 0, image: first(a)[0], aspectRatio: a.aspect_ratio || "16:9", duration: 5, negativePrompt: a.negative_prompt || "", resolution: a.resolution, hidePrompt: 0 }),
   },
   "kling-o1": {
-    name: "Kling O1", type: "video", agentId: "6157", path: "/ai-api/ai/klingO1/task/submit", credits: perSecond(200, 5),
+    name: "Kling O1", type: "video", agentId: "6157", path: "/ai-api/ai/klingO1/task/submit",
+    credits: (a) => tablePrice("kling-o1", `${String(a.resolution || "720p").toLowerCase()}${a.video_url ? "-v2v" : ""}`, Math.ceil(secs(a, 5))),
     // A new video is 5 or 10 s; editing a video keeps its length (3-10 s).
     body: (a) => ({
       model: "kling-video-o1", prompt: String(a.prompt || "").replace(/@(Video|Audio)\d+\s?/g, "").replace(/@Image(\d+)/g, "<<<image_$1>>>").replace(/\s+/g, " ").trim(), resolution: a.resolution || "720p",
@@ -449,7 +480,7 @@ const WEBSITE_MEDIA_MODELS = {
     }),
   },
   "wan3.0-video-prime": {
-    name: "Wan 3.0 Prime", type: "video", agentId: "6215", path: "/ai-api/ai/wan30/task/submit", credits: perSecond(160, 5),
+    name: "Wan 3.0 Prime", type: "video", agentId: "6215", path: "/ai-api/ai/wan30/task/submit", credits: (a) => tablePrice("wan3.0-video-prime", resOf(a, "720P").toUpperCase(), secs(a, 5)),
     body: (a) => {
       const d = secs(a, 5);
       if (d < 2 || d > 30) throw new ToolError("Wan 3.0 Prime takes 2 to 30 seconds.");
@@ -457,7 +488,7 @@ const WEBSITE_MEDIA_MODELS = {
     },
   },
   "wan-2.7": {
-    name: "Wan 2.7", type: "video", agentId: "6165", path: "/ai-api/ai/ali-wan/27/task/submit", credits: perSecond(200, 5),
+    name: "Wan 2.7", type: "video", agentId: "6165", path: "/ai-api/ai/ali-wan/27/task/submit", credits: (a) => tablePrice("wan-2.7", resOf(a, "720P").toUpperCase(), secs(a, 5)),
     // images are first/last frame; with video_url (or metadata.references) they become references instead.
     body: (a) => {
       const d = secs(a, 5);
@@ -468,7 +499,7 @@ const WEBSITE_MEDIA_MODELS = {
     },
   },
   "wan-2.6": {
-    name: "Wan 2.6", type: "video", agentId: "6118", credits: perSecond(200, 5),
+    name: "Wan 2.6", type: "video", agentId: "6118", credits: (a) => tablePrice("wan-2.6", `${resOf(a, "720P").toUpperCase()}${a.video_url ? "-r2v" : ""}`, secs(a, 5)),
     route: (a) => (a.video_url ? ["6120", "wan2.6-r2v", "r2v"] : first(a).length ? ["6119", "wan2.6-i2v", "i2v"] : ["6118", "wan2.6-t2v", "t2v"]),
     path: (a) => `/ai-api/ai/ali-wan26/${WEBSITE_MEDIA_MODELS["wan-2.6"].route(a)[2]}/task/submit`,
     body: (a) => {
@@ -478,7 +509,7 @@ const WEBSITE_MEDIA_MODELS = {
     },
   },
   "seedance-1.0-pro": {
-    name: "Seedance 1.0 Pro", type: "video", agentId: "6022", credits: perSecond(400, 5),
+    name: "Seedance 1.0 Pro", type: "video", agentId: "6022", credits: (a) => tablePrice("seedance-1.0-pro", "", secs(a, 5)),
     path: (a) => `/ai-api/ai/wavespeed/seedance-${first(a).length ? "i2v" : "t2v"}/task/submit`,
     body: (a) => ({ agentId: first(a).length ? "6020" : "6022", model: first(a).length ? "seedance-v1-pro-i2v-1080p" : "seedance-v1-pro-t2v-1080p", prompt: a.prompt, aspectRatio: a.aspect_ratio || "16:9", duration: Number(oneOf("Seedance 1.0 Pro", "duration", secs(a, 5), [5, 10])), image: first(a)[0] }),
   },
@@ -496,8 +527,8 @@ const WEBSITE_MEDIA_MODELS = {
   "trellis-3d": threeD("6229", "trellis-3d", "TRELLIS 3D", 500, { imagesRequired: true, maxImages: 5, noPrompt: true }),
   "rodin-gen-2": threeD("6230", "rodin-gen2", "Rodin Gen-2", 1400, { maxImages: 5 }),
   // detectors (synchronous: the scores come back in the same call)
-  "ai-image-detector": { name: "AI Image Detector", type: "detector", agentId: "6200", detector: "IMAGE", credits: () => 0 },
-  "ai-video-detector": { name: "AI Video Detector", type: "detector", agentId: "6201", detector: "VIDEO", credits: () => 0 },
+  "ai-image-detector": { name: "AI Image Detector", type: "detector", agentId: "6200", detector: "IMAGE", credits: () => 20 },
+  "ai-video-detector": { name: "AI Video Detector", type: "detector", agentId: "6201", detector: "VIDEO", credits: () => 20 },
   // speech to text
   "scribe-v2": {
     name: "Scribe v2 (speech to text)", type: "speech-to-text", agentId: "6175", path: "/ai-api/voice/elevenlabs/task/submit",
@@ -547,11 +578,11 @@ const WEBSITE_MEDIA_HINTS = {
 };
 const websiteMediaEntry = (w) => ({
   id: w.id, type: w.type, source: "website", description: `${w.name} (only on GlobalGPT's website)`, usage: WEBSITE_MEDIA_HINTS[w.id],
-  ...(w.heygen ? { price: "quoted per video (about 1,000 credits per minute)" } : w.detector ? { price: "not shown on the website; GlobalGPT bills it per run" } : { price_from: Math.round(Number(w.credits({ prompt: "x", duration: 5 })) || 0) }),
+  ...(w.heygen ? { price: "quoted per video (about 1,000 credits per minute)" } : w.detector ? { price: "20 credits per run (from the account's credit records; the website doesn't show it)" } : { price_from: Math.round(Number(w.credits({ prompt: "x", duration: 5 })) || 0) }),
 });
 
 // Prices the website shows only as a range (or that depend on the input's length).
-const APPROX_PRICE = new Set(["kling-o1", "wan3.0-video-prime", "wan-2.7", "wan-2.6", "seedance-1.0-pro", "tripo-h3.1", "meshy-7", "scribe-v2", "scribe-v1"]);
+const APPROX_PRICE = new Set(["midjourney", "talking-photo", "scribe-v2", "scribe-v1"]);
 const WEBSITE_MEDIA_ALIASES = { "krea-v3": "krea-3", "flux-3-image-klein": "flux-3-klein", "veo-3": "veo3", "kling-video-o1": "kling-o1", "wan-3.0-prime": "wan3.0-video-prime", "wan2.6": "wan-2.6", "seedance-v1-pro": "seedance-1.0-pro", "heygen": "heygen-video", "meshy-v7": "meshy-7", "hunyuan3d-v3.1": "hunyuan-3d-3.1", "rodin-gen2": "rodin-gen-2", "scribe": "scribe-v2", "scribe_v2": "scribe-v2", "scribe_v1": "scribe-v1", "video-sound-fx": "video-sound", "video-expand": "video-reframe" };
 const websiteMedia = (id) => {
   const key = String(id || "").trim().toLowerCase();
@@ -673,7 +704,7 @@ async function runDetector(env, w, a) {
   const score = (m) => (m && typeof m === "object" ? (typeof m.score === "number" ? m.score : null) : typeof m === "number" ? m : null);
   const { code, message, ...rest } = d || {};
   return defined({
-    status: "succeeded", via: "website", model: w.id, type: "analysis",
+    status: "succeeded", via: "website", model: w.id, type: "analysis", credits_estimated: 20,
     ai_generated: score(d?.aiGenerated), deepfake: score(d?.deepfake), summary: str(d?.summary),
     ...(video ? { frame_ms: frame.frameTimestampMs } : {}),
     media_id: asset.id, details: rest,
@@ -945,7 +976,7 @@ const TOOLS = [
   {
     name: "glbgpt_usage",
     title: "GlobalGPT usage",
-    description: "This connector's daily credit limit and today's spend, plus the most recent generations on the GlobalGPT account with their status and credits (recent: API generations; recent_website: website-only models, when GLBGPT_TOKEN is set). A failed task shows credits 0: its reservation is given back.",
+    description: "This connector's daily credit limit and today's spend, plus the most recent generations on the GlobalGPT account with their status and credits (recent: API generations; recent_website: website-only models; credit_records: what the account was actually charged, website and API, newest first; the last two need GLBGPT_TOKEN). A failed task shows credits 0: its reservation is given back.",
     inputSchema: {
       type: "object",
       properties: { recent: { type: "integer", minimum: 0, maximum: 50, description: "How many recent generations to show (default 10)." } },
@@ -1185,7 +1216,11 @@ const handlers = {
       if (ctx.env.GLBGPT_TOKEN) {
         try {
           const b = await webRequest(ctx.env, "GET", `${WEB}/user-api/api/user/bill/list?page=1&pagesize=${Math.min(50, n)}&direction=all`);
-          charges = (Array.isArray(b?.data?.list) ? b.data.list : []).slice(0, n);
+          charges = (Array.isArray(b?.data?.list) ? b.data.list : []).slice(0, n).map((x) => defined({
+            what: x.display_name ?? x.model ?? x.category_name, credits: x.direction === "increase" ? Number(x.cost) : -Number(x.cost),
+            list_price: x.original_cost !== undefined && Number(x.original_cost) !== Number(x.cost) ? Number(x.original_cost) : undefined,
+            kind: x.source_type, date: x.created_at,
+          }));
         } catch (e) {
           charges = `Couldn't load the credit records: ${e.message}`;
         }
