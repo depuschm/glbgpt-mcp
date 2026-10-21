@@ -7,7 +7,7 @@ Snapshot of what this connector can use, checked on **21 October 2026**. GlobalG
 - **Website media**: images, videos, tools, 3D and speech to text only on glbgpt.com, also through `GLBGPT_TOKEN`.
 - **Not supported**: on glbgpt.com, but not reachable through this connector (yet).
 
-Totals: **103 through the API** (42 chat, 29 image, 21 video, 11 audio), **18 more chat models through the website**, and **40 website-only media models and tools** (tested live on 21 October 2026, see below).
+Totals: **103 through the API** (42 chat, 29 image, 21 video, 11 audio), **18 more chat models through the website**, and **41 website-only media models and tools** (tested live on 21 October 2026, see below).
 
 ## Chat
 
@@ -84,6 +84,7 @@ Each was tested with one short message on 21 October 2026.
 | Gemini 3.7 Flash | `gemini-3.7-flash` | ✅ works |
 | Grok 4.7 | `grok-4.7` | ✅ works |
 | Muse Wonder | `muse-wonder` | ✅ works |
+| Deep Research | `deep-research` | ✅ works (website research agent; sourced report; about 10 credits per 1K tokens, 60 for a short question) |
 | o1 | `o1` | ❌ GlobalGPT's backend can't reach the provider |
 | o3 | `o3` | ❌ GlobalGPT's backend can't reach the provider |
 | o3-mini | `o3-mini` | ❌ GlobalGPT's backend can't reach the provider |
@@ -204,6 +205,7 @@ The connector sends the same fields the website's own form sends (checked agains
 | Image tool | AI Poster | `ai-poster` | 400 | 400 (twice) | ✅ works, text on the poster included (`metadata.textBlocks` as strings or `{text, position}`) |
 | Image tool | AI Product Images | `ai-product-images` | 400 | 400 | ✅ works |
 | Image tool | Logo Maker | `logo-maker` | 100 | 100 | ✅ works (`metadata.brandName`, `style`, `industry`, aspect ratio) |
+| Text tool | AI Translate | `ai-translate` | not listed | 0 | ✅ works (`prompt` = text up to 20,000 characters, `metadata.target_language`; returns the text) |
 | Video | Veo 3 | `veo3` | 1,500 (fixed 5 s) | 1,500 | ✅ works |
 | Video | Kling O1 | `kling-o1` | 1,000 / 2,000 (720p, 5 / 10 s), 1,400 / 2,800 (1080p); editing a video 300 per s (720p) | 1,000 (5 s) | ✅ works; new videos are 5 or 10 s |
 | Video | Wan 3.0 Prime | `wan3.0-video-prime` | 300 (480P, 2 s) to 19,600 (1080P, 30 s), from the website's table | 300 (480P, 2 s) | ✅ works |
@@ -226,4 +228,5 @@ Issues found in the live test and fixed the same day: AI Poster text blocks, Kli
 ## Not supported
 
 - **AI Detector (text)**: the website now hands the text to Yukie (its agent app) instead of a detector endpoint, so it's part of Yukie.
-- **Whole apps, not suitable as connector tools**: Yukie, Agentic Canvas, GlobalClaw, Deep Research, ChatPDF, AI Translate, AI Note Taker.
+- **Whole apps, not suitable as connector tools**: Yukie (agent workspace), Agentic Canvas (node editor), GlobalClaw (runs on your own devices), AI Note Taker (live recording).
+- **ChatPDF**: a chat about an uploaded PDF; needs the website's chat file upload, which isn't wired up yet.
