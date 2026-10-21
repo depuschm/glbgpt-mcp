@@ -28,6 +28,7 @@ GlobalGPT's API limits: 60 requests per minute, 5 chat streams and 10 media task
 - **Midjourney buttons:** a finished grid lists its buttons (`actions`: U1–U4, V1–V4, reroll). Press one with `metadata.action` and `metadata.task_id` (the grid's task id).
 - **AI Image / Video Detector:** `ai-image-detector` (an image URL or `data:` URI) and `ai-video-detector` (`video_url`, `duration`, `metadata.frame_ms`) return AI-generated and deepfake scores right away. A file that isn't in your GlobalGPT media library yet is uploaded there first.
 - **Logo Maker:** `logo-maker` with `metadata.brandName`, `style`, `industry` and an aspect ratio.
+- **Website agents and documents:** `deep-research` works with `glbgpt_chat`; `chatpdf` answers questions about a PDF passed in `files` (website-only chat models take documents in `files` too); `ai-translate` translates text with `glbgpt_generate` (`prompt` + `metadata.target_language`).
 
 ## Setup
 

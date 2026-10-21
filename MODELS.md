@@ -85,6 +85,7 @@ Each was tested with one short message on 21 October 2026.
 | Grok 4.7 | `grok-4.7` | ✅ works |
 | Muse Wonder | `muse-wonder` | ✅ works |
 | Deep Research | `deep-research` | ✅ works (website research agent; sourced report; about 10 credits per 1K tokens, 60 for a short question) |
+| ChatPDF | `chatpdf` | added 21 Oct evening, not yet tested live: `glbgpt_chat` with `files` = one PDF (https URL or data: URI, up to 15 MB) |
 | o1 | `o1` | ❌ GlobalGPT's backend can't reach the provider |
 | o3 | `o3` | ❌ GlobalGPT's backend can't reach the provider |
 | o3-mini | `o3-mini` | ❌ GlobalGPT's backend can't reach the provider |
@@ -229,4 +230,3 @@ Issues found in the live test and fixed the same day: AI Poster text blocks, Kli
 
 - **AI Detector (text)**: the website now hands the text to Yukie (its agent app) instead of a detector endpoint, so it's part of Yukie.
 - **Whole apps, not suitable as connector tools**: Yukie (agent workspace), Agentic Canvas (node editor), GlobalClaw (runs on your own devices), AI Note Taker (live recording).
-- **ChatPDF**: a chat about an uploaded PDF; needs the website's chat file upload, which isn't wired up yet.
