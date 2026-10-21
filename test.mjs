@@ -28,7 +28,10 @@ globalThis.fetch = async (url, init = {}) => {
   const p = u.pathname;
   if (p === '/user-api/api/user/info') return ok({ code: 1, data: { email: 'me@example.com', amount: '150000', balance: '0', currentSubscription: { plan_package: 'lifetime_unlimited', end_date: '2026-11-01 00:00:00' }, subscription: { end_date: '2099-01-01 00:00:00' } } });
   if (p === '/ai-api/cli/v1/models') return ok({ chat: { default: 'gpt-5.6-sol', models: [{ id: 'gpt-5.6-sol', label: 'balanced reasoning' }, { id: 'deepseek-v4-pro' }] }, media: { disabled: ['ideogram-3.0'] } });
-  if (p === '/ai-api/ai/bill/estimatePrice') return ok({ sellable: true, credits: state.price });
+  if (p === '/ai-api/ai/bill/estimatePrice') {
+    if (state.estimateUnknown && body.model === state.estimateUnknown) return ok({ sellable: false, credits: 0, reasonCode: state.estimateReason ?? null });
+    return ok({ sellable: true, credits: state.price });
+  }
   if (p === '/ai-api/ai/storage/upload') return ok({ files: [{ url: 'https://cdn.example/ref.png' }] });
   if (p === '/ai-api/ai/task/get') {
     state.taskPolls++;
@@ -54,7 +57,7 @@ async function rpc(e, method, params, path = `/mcp/${SECRET}`) {
   const t = await r.text(); let b = null; try { b = t ? JSON.parse(t) : null; } catch { b = t; } return { status: r.status, body: b };
 }
 const tool = async (e, name, args = {}) => { const r = await rpc(e, 'tools/call', { name, arguments: args }); const res = r.body.result; return { err: res.isError, text: res.content[0].text, json: (() => { try { return JSON.parse(res.content[0].text); } catch { return null; } })() }; };
-const reset = (o = {}) => { Object.assign(state, { price: 500, taskPolls: 0, pollsUntilDone: 0, submitCode: null, chatMode: 'ok', tokenBad: false, taskFail: false }, o); calls.length = 0; kvStore.clear(); };
+const reset = (o = {}) => { Object.assign(state, { price: 500, taskPolls: 0, pollsUntilDone: 0, submitCode: null, chatMode: 'ok', tokenBad: false, taskFail: false, estimateUnknown: null, estimateReason: null }, o); calls.length = 0; kvStore.clear(); };
 let failures = 0;
 const check = (label, cond) => { if (!cond) failures++; console.log((cond ? 'PASS ' : 'FAIL ') + label); };
 const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
@@ -131,6 +134,22 @@ check('resolution on a model without one -> error', r.err && r.text.includes('re
 r = await tool(env(), 'glbgpt_generate_image', { prompt: 'x', model: 'ideogram-3.0-turbo', seed: 7, negative_prompt: 'blur' });
 const ideo = calls.find((c) => c.path === '/ai-api/ai/ideogram3/task/submit');
 check('ideogram passes seed + negative prompt', !r.err && ideo.body.image_request.seed === 7 && ideo.body.image_request.negative_prompt === 'blur');
+
+// Nano Banana 2.1 (from the web app, not the CLI)
+reset();
+r = await tool(env(), 'glbgpt_generate_image', { prompt: 'pixel art', model: 'nano-banana-2.1' });
+const nb21 = calls.find((c) => c.path === '/ai-api/ai/nano_banana_vertexai/task/submit').body;
+check('2.1: body uses agent 6252, model nano_banana_2_1, 1K default', !r.err && nb21.agentId === '6252' && nb21.image_request.model === 'nano_banana_2_1' && nb21.image_request.imageSize === '1K' && nb21.image_request.aspectRatio === undefined);
+check('2.1: uses the price check when it knows the model', r.json.credits_estimated === 500);
+reset({ estimateUnknown: 'nano-banana-2.1' });
+r = await tool(env({ DAILY_CREDIT_LIMIT: '20000' }), 'glbgpt_generate_image', { prompt: 'pixel art', model: 'nano-banana-2.1', resolution: '2K' });
+check('2.1: price check unknown -> listed price (2K = 300), counted', !r.err && r.json.credits_estimated === 300 && kvStore.get(spentKey) === '300');
+reset({ estimateUnknown: 'nano-banana-2.1', estimateReason: 'insufficient_funds' });
+r = await tool(env(), 'glbgpt_generate_image', { prompt: 'pixel art', model: 'nano-banana-2.1' });
+check('2.1: insufficient funds still refused, nothing submitted', r.err && r.text.includes('Insufficient') && !calls.some((c) => c.path.endsWith('/task/submit')));
+reset({ estimateUnknown: 'nano-banana-2' });
+r = await tool(env(), 'glbgpt_generate_image', { prompt: 'x', model: 'nano-banana-2' });
+check('models without a listed price still need the price check', r.err && !calls.some((c) => c.path.endsWith('/task/submit')));
 
 // daily limit
 reset();

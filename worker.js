@@ -1,6 +1,7 @@
 // glbgpt-mcp: a remote MCP server on Cloudflare Workers for your GlobalGPT account.
 // Same shape as discord-mcp: JSON-RPC over HTTP, secret in a header or the URL, /health.
-// The GlobalGPT calls mirror @glbgpt/cli 0.2.4 (the official stdio MCP server).
+// The GlobalGPT calls mirror @glbgpt/cli 0.2.4 (the official stdio MCP server); models the CLI
+// doesn't have yet (Nano Banana 2.1) are taken from GlobalGPT's web app.
 
 const API = "https://api2.glbgpt.com";
 const UA = "glbgpt-mcp-worker/1.0 (cloudflare-workers)";
@@ -105,6 +106,14 @@ const seedance2 = (id, displayName, agentId) => ({
 const MODELS = [
   nanoBanana("nano-banana-2", "Nano Banana 2", "6136", "nano_banana_2", 8,
     (p) => ({ aspect_ratio: p.aspectRatio, resolution: p.resolution, n: 1 })),
+  // Not in the CLI yet: taken from GlobalGPT's web app (agent 6252, same endpoint as Nano Banana 2).
+  // The web app prices it from its own table; knownPrice is used if the price check doesn't know the model.
+  {
+    ...nanoBanana("nano-banana-2.1", "Nano Banana 2.1", "6252", "nano_banana_2_1", 14,
+      (p) => ({ aspect_ratio: p.aspectRatio, resolution: p.resolution, n: 1 })),
+    support: { aspectRatios: NANO_RATIOS, resolutions: ["1K", "2K", "4K"], defaultResolution: "1K", maxImages: 14 },
+    knownPrice: { "1K": 200, "2K": 300, "4K": 500 },
+  },
   seedream("seedream-5.0-lite", "Seedream 5.0 Lite", "6135", "Seedream 5.0 Lite", ["2K", "3K"],
     (p) => ({ aspect_ratio: p.aspectRatio, resolution: p.resolution })),
   {
@@ -650,7 +659,8 @@ async function generate(type, ctx, a) {
   limit.check();
 
   const est = await g.estimate(spec.estimateModelFor?.(p) ?? spec.estimateModel, spec.buildEstimateParams(p));
-  if (!est?.sellable) {
+  const fallback = spec.knownPrice?.[p.resolution];
+  if (!est?.sellable && !(fallback !== undefined && est?.reasonCode !== "insufficient_funds")) {
     const reason = est?.reasonCode;
     throw new ToolError(
       reason === "insufficient_funds" ? "Insufficient credit balance." :
@@ -658,7 +668,9 @@ async function generate(type, ctx, a) {
       `${spec.id} isn't available with these settings${reason ? ` (${reason})` : ""}.`
     );
   }
-  const credits = Math.max(0, Number(est.credits) || 0);
+  // A model the price check doesn't know yet is billed at the web app's listed price; if the plan
+  // doesn't allow it, the submit itself is refused with a clear payment message.
+  const credits = Math.max(0, Number(est?.sellable ? est.credits : fallback) || 0);
   const reserved = await limit.reserve(credits);
 
   let taskId;
