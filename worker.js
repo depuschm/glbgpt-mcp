@@ -588,7 +588,7 @@ async function websiteRecent(env, n) {
     type: MEDIA_TYPES[r.mediaType],
     url: str(r.outputFileUrl),
     credits: typeof r.points === "number" ? r.points : typeof r.credits === "number" ? r.credits : undefined,
-    created: r.createAt ?? r.createTime,
+    created: typeof (r.createAt ?? r.createTime) === "number" ? new Date(r.createAt ?? r.createTime).toISOString() : r.createAt ?? r.createTime,
     reason: r.status === "failed" ? str(r.failedReasonShort) ?? str(r.failedReason) : undefined,
   }));
 }
