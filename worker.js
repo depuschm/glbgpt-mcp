@@ -38,7 +38,9 @@ const WEBSITE_CHAT_MODELS = {
   "qwen3.8-flash": ["6217", "Qwen3.8 Flash"], "agnes-2.5-flash": ["6237", "Agnes 2.5 Flash"],
   "perplexity": ["4372", "Perplexity (search)"],
 };
-const WEBSITE_ALIASES = { sonar: "perplexity" };
+const WEBSITE_ALIASES = { sonar: "perplexity", "deepresearch": "deep-research" };
+// Website workflow agents reached like chat models (through /dify-api); they can run for minutes.
+const WEBSITE_AGENTS = { "deep-research": { agentId: "4341", name: "Deep Research", prefix: "/dify-api" } };
 const UA = "glbgpt-mcp-worker/2.0 (cloudflare-workers)";
 const SERVER_INFO = { name: "glbgpt-mcp", version: "2.0.0" };
 const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
@@ -160,17 +162,18 @@ class GlobalGPT {
 // The website's own chat endpoint, signed with the GlobalGPT login token. It takes one query (no
 // system role or images) and streams the answer as SSE "message" events. Each call becomes a
 // conversation in the owner's chat history on glbgpt.com.
-async function websiteChat(env, agentId, query) {
+// opts.prefix: "/ai-api" (chat models) or "/dify-api" (the website's workflow agents: Deep Research, AI Translate, ...).
+async function websiteChat(env, agentId, query, opts = {}) {
   if (!env.GLBGPT_TOKEN) throw new ToolError("This chat model is only on GlobalGPT's website, which needs GLBGPT_TOKEN (your login token) on the Worker.");
   let res;
   try {
-    res = await fetch(WEB_CHAT, {
+    res = await fetch(opts.prefix ? `https://api2.glbgpt.com${opts.prefix}/ai/agent/chatStream` : WEB_CHAT, {
       method: "POST",
       headers: { Authorization: `Bearer ${env.GLBGPT_TOKEN}`, "Content-Type": "application/json", Accept: "text/event-stream", "User-Agent": UA },
       body: JSON.stringify({
         device: { deviceType: "pc" },
         productNo: "glbgpt", // some agents refuse the call without it ("invalid product no null")
-        inputs: { thinking_patch: true, enableImages: false, deep_research: false, study: false, enableDeepThink: false },
+        inputs: { ...(opts.prefix === "/dify-api" ? {} : { thinking_patch: true }), enableImages: false, deep_research: false, study: false, enableDeepThink: false, ...(opts.inputs || {}) },
         enableSearch: false, agentId, query, conversationId: "", parentMessageId: "", files: [], chatTaskId: crypto.randomUUID(),
       }),
     });
@@ -234,6 +237,7 @@ const PAYMENT_MESSAGES = {
 const websiteModel = (id) => {
   const key = String(id || "").trim().toLowerCase();
   const k = WEBSITE_ALIASES[key] ?? key;
+  if (WEBSITE_AGENTS[k]) return { id: k, ...WEBSITE_AGENTS[k] };
   return WEBSITE_CHAT_MODELS[k] ? { id: k, agentId: WEBSITE_CHAT_MODELS[k][0], name: WEBSITE_CHAT_MODELS[k][1] } : null;
 };
 const isModelMissing = (e) => e instanceof ToolError && e.status === 404;
@@ -478,6 +482,7 @@ const WEBSITE_MEDIA_MODELS = {
     name: "AI Poster", type: "image", agentId: "6140", path: "/ai-api/ai/tools/poster/generate", credits: () => 400,
     body: (a) => ({ prompt: a.prompt, aspectRatio: a.aspect_ratio || "1:1", textBlocks: posterTextBlocks(meta(a).textBlocks), usageContext: meta(a).usageContext || "" }),
   },
+  "ai-translate": { name: "AI Translate", type: "text", agentId: "6174", translate: true, credits: () => 0 },
   "logo-maker": {
     name: "Logo Maker", type: "image", agentId: "6128", path: "/ai-api/ai/logo-maker/generate", credits: () => 100, promptOptional: true,
     body: (a) => {
@@ -589,6 +594,7 @@ const WEBSITE_MEDIA_HINTS = {
   "hidream-o1": "prompt; aspect_ratio 1:1|16:9|9:16|4:3|3:4|3:2|2:3|21:9|9:21; resolution 2K|4K; up to 3 images", "hidream-o1-dev": "same as hidream-o1",
   "hidream-e1-full": "prompt = the edit instruction; exactly 1 image", "hidream-i1-full": "prompt; aspect_ratio 1:1|16:9|9:16|4:3|3:4|3:2|2:3|21:9|9:21; resolution 1K|2K (text only)", "hidream-i1-dev": "same as hidream-i1-full",
   "midjourney": "prompt (--v and --ar are moved into their fields, other flags stay); aspect_ratio 1:1|4:3|3:4|16:9|9:16; images (up to 5) as image prompts; metadata.version 8.2 (default)|8|7.0|6.1|6.0|niji6|niji5|niji4, imageQuality 0.25|0.5|1|2, artisticLevel 50|100|250|750, style, view, characterShot, lighting, sref, cref, cw; returns the 2x2 grid and its buttons (actions). To press one (upscale U1-U4, vary V1-V4, reroll, ...): metadata.action = the button, metadata.task_id = the grid's task_id",
+  "ai-translate": "prompt = the text (up to 20,000 characters); metadata.target_language = the language name, e.g. Spanish, German, Japanese, Chinese (Simplified); returns the translated text",
   "logo-maker": "metadata.brandName (the company or brand name) and/or prompt (extra wishes); metadata.style auto|minimalist|hand-drawn|geometric|line-art|vintage|abstract; metadata.industry technology|ecommerce|food|health|creative|saas|hospitality|education|nonprofit|fashion|realestate|financial|media|manufacturing|professional; aspect_ratio 1:1|1:3|3:1|1:2|2:1|9:16|16:9|10:16|16:10|2:3|3:2|3:4|4:3|4:5|5:4",
   "ai-poster": "prompt; aspect_ratio 1:1|16:9|9:16; metadata.textBlocks: up to 3 texts, each a string or {text, position top|middle|bottom}; metadata.usageContext social-media|school-campus|club-team|community|party-event|store-business|real-estate|announcement",
   "ai-product-images": "images[0] = the product photo; prompt; aspect_ratio 1:1|3:4|16:9|9:16; metadata.text and textPosition top|middle|bottom; metadata.usageContext main-product|lifestyle|product-detail|feature-highlight|comparison|ad-creative|website-hero|promotional-sale",
@@ -615,7 +621,7 @@ const WEBSITE_MEDIA_HINTS = {
 };
 const websiteMediaEntry = (w) => ({
   id: w.id, type: w.type, source: "website", description: `${w.name} (only on GlobalGPT's website)`, usage: WEBSITE_MEDIA_HINTS[w.id],
-  ...(w.heygen ? { price: "quoted per video (about 1,000 credits per minute)" } : w.detector ? { price: "20 credits per run (from the account's credit records; the website doesn't show it)" } : { price_from: Math.round(Number(w.credits({ prompt: "x", duration: 5 })) || 0) }),
+  ...(w.heygen ? { price: "quoted per video (about 1,000 credits per minute)" } : w.translate ? { price: "billed by length (not shown on the website)" } : w.detector ? { price: "20 credits per run (from the account's credit records; the website doesn't show it)" } : { price_from: Math.round(Number(w.credits({ prompt: "x", duration: 5 })) || 0) }),
 });
 
 // Prices the website shows only as a range (or that depend on the input's length).
@@ -756,6 +762,17 @@ async function runDetector(env, w, a, limit) {
     media_id: asset.id, details: rest,
     note: "Scores are 0-1 likelihoods. Use them as a risk assessment, not proof.",
   });
+}
+
+// AI Translate: the website's translation agent (text in, text out; the answer streams back like a chat).
+async function runTranslate(env, w, a) {
+  const text = String(a.prompt || "");
+  if (!text.trim()) throw new ToolError("AI Translate needs the text to translate as prompt (up to 20,000 characters).");
+  if (text.length > 20000) throw new ToolError("AI Translate takes up to 20,000 characters at a time.");
+  const lang = String(meta(a).target_language || meta(a).targetLanguage || "English");
+  const out = await websiteChat(env, w.agentId, text, { prefix: "/dify-api", inputs: { translate_type: "text", target_language: lang, is_first: true } });
+  if (!out.answer) throw new ToolError(`AI Translate returned no text. Events received: ${JSON.stringify(out.debug)}`);
+  return defined({ status: "succeeded", via: "website", model: w.id, type: "text", target_language: lang, text: out.answer, usage: out.usage });
 }
 
 // The account's recent website generations (website-only models; the API's list doesn't have them).
@@ -1023,7 +1040,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        type: { type: "string", enum: ["chat", "image", "video", "audio", "3d", "speech-to-text", "detector"], description: "Only list this kind of model." },
+        type: { type: "string", enum: ["chat", "image", "video", "audio", "3d", "speech-to-text", "detector", "text"], description: "Only list this kind of model." },
         model: { type: "string", description: "Show one model's details instead of a list." },
       },
       additionalProperties: false,
@@ -1122,6 +1139,7 @@ async function generate(ctx, a) {
     const w = isModelMissing(e) ? websiteMedia(body.model) : null;
     if (!w) throw e;
     if (w.detector) return await runDetector(ctx.env, w, body, limit);
+    if (w.translate) return await runTranslate(ctx.env, w, body);
     const { taskId, credits } = await websiteGenerate(ctx, w, body, limit);
     const result = await waitForWebTask(ctx.env, limit, taskId, Date.now() + WAIT_MS);
     return { ...result, model: w.id, credits_estimated: credits, ...(APPROX_PRICE.has(w.id) ? { price_note: "estimated from the website's list price; GlobalGPT bills the exact amount" } : {}) };
@@ -1196,7 +1214,7 @@ const handlers = {
       // Not in the API, but on the website: same question through the website's chat.
       if (images.length) throw new ToolError(`${web.name} is only on GlobalGPT's website, where this connector can't attach images. Ask without images, or pick an API model (glbgpt_list_models).`);
       const query = [system, prompt].filter(Boolean).join("\n\n");
-      const out = await websiteChat(ctx.env, web.agentId, query);
+      const out = await websiteChat(ctx.env, web.agentId, query, web.prefix ? { prefix: web.prefix } : {});
       if (schema) return parseJsonAnswer(out.answer);
       if (!out.answer) {
         const reason = out.debug?.start?.match(/"reason":"([^"]+)"/)?.[1];
@@ -1256,7 +1274,7 @@ const handlers = {
     // Chat models the API doesn't list but the website has, when the login token is set.
     if (ctx.env.GLBGPT_TOKEN && (!a.type || a.type === "chat")) {
       const have = new Set(models.map((m) => String(m.id).toLowerCase()));
-      for (const id of Object.keys(WEBSITE_CHAT_MODELS)) if (!have.has(id)) models.push(websiteEntry(websiteModel(id)));
+      for (const id of [...Object.keys(WEBSITE_CHAT_MODELS), ...Object.keys(WEBSITE_AGENTS)]) if (!have.has(id)) models.push(websiteEntry(websiteModel(id)));
     }
     return { count: models.length, models };
   },

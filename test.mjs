@@ -25,7 +25,7 @@ globalThis.fetch = async (url, init = {}) => {
   const u = new URL(url);
   const body = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
   calls.push({ method: init.method, path: u.pathname.replace('/ai-api/open/v1', ''), search: u.search, headers: init.headers, body });
-  if (url === 'https://api2.glbgpt.com/ai-api/ai/agent/chatStream') {
+  if (url === 'https://api2.glbgpt.com/ai-api/ai/agent/chatStream' || url === 'https://api2.glbgpt.com/dify-api/ai/agent/chatStream') {
     if (init.headers?.Authorization !== `Bearer ${TOKEN}`) return res(200, { code: 401, message: 'token invalid' });
     if (state.webPay) return res(200, { code: 402, message: 'pay', data: { subCode: 4010 } });
     const sse = ['data:{"event":"message","answer":"O"}\n\n', 'data:{"event":"message","answer":body.json ? "{\\"a\\":" : "K"}\n\n'.replace('body.json ? "{\\"a\\":" : "K"', body.query.includes('JSON Schema') ? '"{\\"a\\":1}"' : '"K"'), 'data:{"event":"message_end","metadata":{"usage":{"prompt_tokens":7000,"completion_tokens":2}}}\n\n'];
@@ -54,7 +54,7 @@ globalThis.fetch = async (url, init = {}) => {
   const p = u.pathname.replace('/ai-api/open/v1', '');
   if (p === '/models' && init.method === 'GET') return res(200, { object: 'list', data: [{ id: 'nano-banana-2.1', type: u.searchParams.get('type') || 'image', price: { '1K': 200 } }, { id: 'kling-v3', type: 'video' }] });
   if (p.startsWith('/models/')) return /\/(nope|claude-opus-5\.5|heygen-video)$/.test(p) ? err(404, 'model_not_found', 'Unknown model') : res(200, { id: decodeURIComponent(p.slice(8)), parameters: { resolution: ['1K', '2K'] } });
-  if (p === '/tasks/estimate' && ['hidream-o1', 'kling-o1', 'heygen-video', 'video-upscale', 'tripo-h3.1', 'wan-2.6', 'ideogram-4.5', 'scribe-v2', 'made-up-media', 'ai-poster', 'ai-product-images', 'midjourney', 'ideogram-3.0', 'video-translate', 'talking-photo', 'meshy-7', 'wan-2.7', 'seedance-1.0-pro', 'ai-image-detector', 'ai-video-detector', 'wan3.0-video-prime', 'logo-maker'].includes(body.model)) return err(404, 'model_not_found', `Unknown model ${body.model}`);
+  if (p === '/tasks/estimate' && ['hidream-o1', 'kling-o1', 'heygen-video', 'video-upscale', 'tripo-h3.1', 'wan-2.6', 'ideogram-4.5', 'scribe-v2', 'made-up-media', 'ai-poster', 'ai-product-images', 'midjourney', 'ideogram-3.0', 'video-translate', 'talking-photo', 'meshy-7', 'wan-2.7', 'seedance-1.0-pro', 'ai-image-detector', 'ai-video-detector', 'wan3.0-video-prime', 'logo-maker', 'ai-translate'].includes(body.model)) return err(404, 'model_not_found', `Unknown model ${body.model}`);
   if (p === '/tasks/estimate') {
     if (state.estimateStatus !== 200) return err(state.estimateStatus, state.estimateStatus === 402 ? 'insufficient_credit' : 'invalid_request', 'nope');
     return res(200, { credits: state.price, billing_model: `${body.model}-tier` });
@@ -74,7 +74,7 @@ globalThis.fetch = async (url, init = {}) => {
     return res(200, { id: p.slice(7), status: 'processing' });
   }
   if (p === '/chat/completions') {
-    if (['claude-opus-5.5', 'perplexity', 'sonar', 'made-up-model'].includes(body.model)) return err(404, 'model_not_found', `The model '${body.model}' does not exist or you do not have access to it.`);
+    if (['claude-opus-5.5', 'perplexity', 'sonar', 'made-up-model', 'deep-research'].includes(body.model)) return err(404, 'model_not_found', `The model '${body.model}' does not exist or you do not have access to it.`);
     if (body.response_format && state.chatJsonReject) return err(400, 'upstream_rejected', 'json mode not supported');
     const content = body.response_format || /JSON Schema/.test(body.messages[0]?.content ?? '') ? '```json\n{"a":1}\n```' : 'Hello';
     return res(200, { id: 'c1', model: body.model, choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 2 } });
@@ -473,6 +473,18 @@ const ma = calls.find((c) => c.path === '/ai-api/ai/zeakai/mj/submit/action');
 check('midjourney action: U2 of the given task, no prompt needed', !r.err && ma && ma.body.image_request.customId === 'MJ::U2' && ma.body.image_request.taskId === 'w9' && ma.body.image_request.model === 'mj-zeakai-action' && ma.body.conversationId === 'c1' && ma.body.name === 'U2' && !('action' in ma.body.image_request));
 r = await tool(envT(), 'glbgpt_generate', { model: 'midjourney', metadata: { action: 'V9', task_id: 'web:w9' } });
 check('midjourney unknown button -> lists the buttons', r.err && r.text.includes('U1, U2, reroll'));
+
+// workflow agents: deep research (chat), ai translate (text)
+reset();
+r = await tool(envT(), 'glbgpt_chat', { model: 'deep-research', prompt: 'hi' });
+const dr = calls.find((c) => c.path === '/dify-api/ai/agent/chatStream');
+check('deep research: website agent 4341 through /dify-api', !r.err && r.json.answer === 'OK' && dr && dr.body.agentId === '4341' && !('thinking_patch' in dr.body.inputs));
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'ai-translate', prompt: 'Hallo Welt', metadata: { target_language: 'English' } });
+const tr = calls.find((c) => c.path === '/dify-api/ai/agent/chatStream');
+check('ai translate: /dify-api, agent 6174, translate inputs, text back', !r.err && r.json.text === 'OK' && r.json.type === 'text' && tr.body.agentId === '6174' && tr.body.inputs.translate_type === 'text' && tr.body.inputs.target_language === 'English' && tr.body.query === 'Hallo Welt');
+r = await tool(envT(), 'glbgpt_list_models', { type: 'chat' });
+check('deep research listed with the website chat models', !r.err && r.json.models.some((m) => m.id === 'deep-research' && m.source === 'website'));
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);
