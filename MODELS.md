@@ -85,7 +85,7 @@ Each was tested with one short message on 21 October 2026.
 | Grok 4.7 | `grok-4.7` | ✅ works |
 | Muse Wonder | `muse-wonder` | ✅ works |
 | Deep Research | `deep-research` | ✅ works (website research agent; sourced report; about 10 credits per 1K tokens, 60 for a short question) |
-| ChatPDF | `chatpdf` | added 21 Oct evening, not yet tested live: `glbgpt_chat` with `files` = one PDF (https URL or data: URI, up to 15 MB) |
+| ChatPDF | `chatpdf` | ✅ works: `glbgpt_chat` with one PDF in `files` (or in `images` for clients with an older tool list); https URL or data: URI, up to 15 MB; under 1 credit per question. Some sites refuse the download (w3.org did), arXiv works |
 | o1 | `o1` | ❌ GlobalGPT's backend can't reach the provider |
 | o3 | `o3` | ❌ GlobalGPT's backend can't reach the provider |
 | o3-mini | `o3-mini` | ❌ GlobalGPT's backend can't reach the provider |
