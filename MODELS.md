@@ -206,7 +206,7 @@ Images, videos, tools, 3D and speech to text that only glbgpt.com has. `glbgpt_g
 | Video | Wan 3.0 Prime | `wan3.0-video-prime` | about 160 per second | ✅ works (2 s, 480P) |
 | Video | Wan 2.7 | `wan-2.7` | about 200 per second | ✅ works (2 s) |
 | Video | Wan 2.6 | `wan-2.6` | about 200 per second | ⚠️ works only with `aspect_ratio` as a size (`1280*720`, `720*1280`, `1920*1080`, `1080*1920`); the default `16:9` is refused ("Invalid size value") |
-| Video | Seedance 1.0 Pro | `seedance-1.0-pro` | 2,000 (5 s) | ⏳ submitted fine (5 s), still processing after 30+ minutes at the time of writing |
+| Video | Seedance 1.0 Pro | `seedance-1.0-pro` | 2,000 (5 s) | ⏳ submitted fine (5 s), but stuck in GlobalGPT's own queue ("High demand right now") for 8+ hours; the website shows it as "In queue" too, so the connector reports it correctly |
 | Video | HeyGen avatar video | `heygen-video` | quoted per video (about 1,000 per minute) | ❌ "Insufficient credit. This operation requires 'api' credits." (voices list works) |
 | Video tool | Video Upscale | `video-upscale` | 35 / 125 / 498 per second (720p / 1080p / 4K) | ✅ works (720p) |
 | Video tool | Video Sound | `video-sound` | 1.5 per second | ✅ works |
