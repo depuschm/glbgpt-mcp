@@ -18,7 +18,7 @@ const KV = { get: async (k) => kvStore.get(k) ?? null, put: async (k, v) => { kv
 // Fake GlobalGPT API
 const calls = [];
 const state = {};
-const defaults = { price: 200, reserved: undefined, polls: 0, pollsUntilDone: 0, fail: null, submitStatus: 200, submitNetErrors: 0, keyBad: false, chatJsonReject: false, estimateStatus: 200, webPay: false };
+const defaults = { price: 200, reserved: undefined, polls: 0, pollsUntilDone: 0, fail: null, submitStatus: 200, submitNetErrors: 0, keyBad: false, chatJsonReject: false, estimateStatus: 200, webPay: false, webFail: false, webPolls: 0, webPollsUntilDone: 0 };
 const res = (status, d, headers = {}) => new Response(JSON.stringify(d), { status, headers: { 'Content-Type': 'application/json', ...headers } });
 const err = (status, code, message = code) => res(status, { error: { message, type: code, code } });
 globalThis.fetch = async (url, init = {}) => {
@@ -32,11 +32,23 @@ globalThis.fetch = async (url, init = {}) => {
     if (body.query.includes('JSON Schema')) sse[0] = 'data:{"event":"message","answer":""}\n\n';
     return new Response(new ReadableStream({ start(c) { for (const l of sse) c.enqueue(new TextEncoder().encode(l)); c.close(); } }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
   }
+  if (url.startsWith('https://api2.glbgpt.com/ai-api/') && !url.startsWith(API) && !url.endsWith('/agent/chatStream')) {
+    if (init.headers?.Authorization !== `Bearer ${TOKEN}`) return res(200, { code: 401, message: 'token invalid' });
+    const wp = u.pathname;
+    if (wp === '/ai-api/ai/task/get') { state.webPolls = (state.webPolls || 0) + 1; return res(200, state.webFail ? { code: 1, task: { status: 'failed', failedReason: 'nsfw', errorCode: 'X' } } : state.webPolls > (state.webPollsUntilDone || 0) ? { code: 1, task: { status: 'success', outputFileUrl: 'https://cdn.example/web.png', mediaType: 1 } } : { code: 1, task: { status: 'processing' } }); }
+    if (wp === '/ai-api/ai/heygen/quotes/video') return res(200, { data: { currency: 'usd', estimated_amount: 0.25 } });
+    if (wp === '/ai-api/ai/heygen/videos') return res(200, { operation: { id: 'op1', status: 'pending', kind: 'create_video', billing_status: 'reserved' } });
+    if (wp.startsWith('/ai-api/ai/heygen/operations/')) return res(200, { operation: { id: 'op1', status: 'succeeded' }, data: { video_url: 'https://cdn.example/heygen.mp4' } });
+    if (wp === '/ai-api/ai/heygen/voices') return res(200, { data: [{ voice_id: 'v1', name: 'Anna', language: 'de', type: 'public' }, { voice_id: 'v2', type: 'private' }] });
+    if (state.webPay) return res(200, { code: 402, message: 'pay', data: { subCode: 4002 } });
+    return res(200, { code: 1, taskId: 'w1' });
+  }
   if (!url.startsWith(API)) return err(404, 'wrong_host');
   if (state.keyBad || init.headers?.Authorization !== `Bearer ${KEY}`) return err(401, 'invalid_api_key');
   const p = u.pathname.replace('/ai-api/open/v1', '');
   if (p === '/models' && init.method === 'GET') return res(200, { object: 'list', data: [{ id: 'nano-banana-2.1', type: u.searchParams.get('type') || 'image', price: { '1K': 200 } }, { id: 'kling-v3', type: 'video' }] });
-  if (p.startsWith('/models/')) return /\/(nope|claude-opus-5\.5)$/.test(p) ? err(404, 'model_not_found', 'Unknown model') : res(200, { id: decodeURIComponent(p.slice(8)), parameters: { resolution: ['1K', '2K'] } });
+  if (p.startsWith('/models/')) return /\/(nope|claude-opus-5\.5|heygen-video)$/.test(p) ? err(404, 'model_not_found', 'Unknown model') : res(200, { id: decodeURIComponent(p.slice(8)), parameters: { resolution: ['1K', '2K'] } });
+  if (p === '/tasks/estimate' && ['hidream-o1', 'kling-o1', 'heygen-video', 'video-upscale', 'tripo-h3.1', 'wan-2.6', 'ideogram-4.5', 'scribe-v2', 'made-up-media'].includes(body.model)) return err(404, 'model_not_found', `Unknown model ${body.model}`);
   if (p === '/tasks/estimate') {
     if (state.estimateStatus !== 200) return err(state.estimateStatus, state.estimateStatus === 402 ? 'insufficient_credit' : 'invalid_request', 'nope');
     return res(200, { credits: state.price, billing_model: `${body.model}-tier` });
@@ -155,9 +167,69 @@ check('list models adds website-only chat models (with token)', !r.err && r.json
 r = await tool(env(), 'glbgpt_list_models', { type: 'chat' });
 check('without token, no website models listed', !r.json.models.some((m) => m.source === 'website'));
 r = await tool(envT(), 'glbgpt_list_models', { type: 'video' });
-check('website models only in chat lists', !r.json.models.some((m) => m.source === 'website'));
+check('website chat models only in chat lists', !r.json.models.some((m) => m.source === 'website' && m.type === 'chat') && r.json.models.some((m) => m.id === 'kling-o1' && m.source === 'website'));
 r = await tool(envT(), 'glbgpt_list_models', { model: 'claude-opus-5.5' });
 check('details for a website-only model', !r.err && r.json.source === 'website' && r.json.available === true);
+
+// website-only media
+reset();
+r = await tool(envT({ DAILY_CREDIT_LIMIT: '5000' }), 'glbgpt_generate', { model: 'hidream-o1', prompt: 'a fox', aspect_ratio: '1:1', images: ['https://x.example/a.png'] });
+const hd = calls.find((c) => c.path === '/ai-api/ai/hidream/task/submit');
+check('website image: API refuses -> website endpoint, done with url', !r.err && r.json.status === 'succeeded' && r.json.url === 'https://cdn.example/web.png' && r.json.via === 'website' && r.json.task_id === 'web:w1');
+check('website image body: model, agent, product no, images', hd.body.model === 'hidream-o1-image' && hd.body.agentId === '6249' && hd.body.productNo === 'glbgpt' && hd.body.images[0] === 'https://x.example/a.png' && hd.headers.Authorization === `Bearer ${TOKEN}`);
+check('website image: list price counted (133)', r.json.credits_estimated === 133 && kvStore.get(spentKey) === '133');
+reset({ webPollsUntilDone: 99 });
+r = await tool(envT({ DAILY_CREDIT_LIMIT: '5000' }), 'glbgpt_generate', { model: 'kling-o1', prompt: 'orbit @Image1', duration: 10, images: ['https://x.example/a.png'] });
+const ko = calls.find((c) => c.path === '/ai-api/ai/klingO1/task/submit').body;
+check('website video: still running -> web task id + approximate price note', !r.err && r.json.status === 'processing' && r.json.task_id === 'web:w1' && r.json.price_note && r.json.credits_estimated === 2000);
+check('kling o1 body: @Image1 rewritten, images as JSON string, duration', ko.prompt === 'orbit <<<image_1>>>' && ko.imageUrls === '["https://x.example/a.png"]' && ko.duration === 10);
+state.webPollsUntilDone = 0;
+r = await tool(envT(), 'glbgpt_check_task', { task_id: 'web:w1' });
+check('check_task on a website task -> url', !r.err && r.json.status === 'succeeded' && r.json.via === 'website');
+reset({ webFail: true });
+r = await tool(envT({ DAILY_CREDIT_LIMIT: '5000' }), 'glbgpt_generate', { model: 'hidream-o1', prompt: 'x' });
+check('failed website task -> reason, taken off the counter', r.err && r.text.includes('nsfw') && kvStore.get(spentKey) === '0');
+reset({ webPay: true });
+r = await tool(envT({ DAILY_CREDIT_LIMIT: '5000' }), 'glbgpt_generate', { model: 'hidream-o1', prompt: 'x' });
+check('website refuses (no credit) -> message, rolled back', r.err && r.text.includes('Insufficient') && kvStore.get(spentKey) === '0');
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'wan-2.6', prompt: 'x', images: ['https://x.example/a.png'] });
+const w26 = calls.find((c) => c.path.startsWith('/ai-api/ai/ali-wan26/'));
+check('wan 2.6 picks image-to-video endpoint and agent', !r.err && w26.path === '/ai-api/ai/ali-wan26/i2v/task/submit' && w26.body.agentId === '6119' && w26.body.model === 'wan2.6-i2v');
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'video-upscale', video_url: 'https://x.example/v.mp4', duration: 10, resolution: '1080p' });
+const vu = calls.find((c) => c.path === '/ai-api/ai/video-tools/task/submit').body;
+check('video tool: video + duration, price per second (1247)', !r.err && vu.video === 'https://x.example/v.mp4' && vu.durationSeconds === 10 && r.json.credits_estimated === 1247);
+r = await tool(envT(), 'glbgpt_generate', { model: 'video-upscale', video_url: 'https://x.example/v.mp4' });
+check('video tool without duration -> asks for it', r.err && r.text.includes('duration'));
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'tripo-h3.1', prompt: 'a chair', metadata: { quad: true } });
+const td = calls.find((c) => c.path === '/ai-api/ai/3d/task/submit').body;
+check('3D: prompt + options, price 330', !r.err && td.model === 'tripo-h3.1' && td.prompt === 'a chair' && td.quad === true && r.json.credits_estimated === 330);
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'ideogram-4.5', prompt: 'logo', metadata: { quality: 'low' } });
+const i45 = calls.find((c) => c.path === '/ai-api/ai/ideogram3/task/submit').body;
+check('ideogram 4.5: quality low -> 100, model name in image_request', !r.err && i45.image_request.model === 'Ideogram 4.5' && i45.image_request.quality === 'low' && r.json.credits_estimated === 100);
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'scribe-v2', video_url: 'https://x.example/a.mp3', duration: 125 });
+const sc = calls.find((c) => c.path === '/ai-api/voice/elevenlabs/task/submit').body;
+check('scribe: audio url, type 2, 12 credits per started minute (36)', !r.err && sc.inputSourceUrl === 'https://x.example/a.mp3' && sc.type === 2 && r.json.credits_estimated === 36);
+reset();
+r = await tool(envT(), 'glbgpt_generate', { model: 'heygen-video', prompt: 'Hallo!', images: ['https://x.example/face.png'], metadata: { voice_id: 'v1' } });
+const hq = calls.find((c) => c.path === '/ai-api/ai/heygen/quotes/video').body;
+check('heygen: quote first (0.25 USD -> 250), then video, then url', !r.err && r.json.url === 'https://cdn.example/heygen.mp4' && r.json.task_id === 'heygen:op1' && r.json.credits_estimated === 250 && hq.type === 'image' && hq.script === 'Hallo!' && hq.voice_id === 'v1');
+r = await tool(envT(), 'glbgpt_generate', { model: 'heygen-video', prompt: 'Hallo!', images: ['https://x.example/face.png'] });
+check('heygen without voice -> points to the voices list', r.err && r.text.includes('voice_id'));
+r = await tool(envT(), 'glbgpt_list_models', { model: 'heygen-video' });
+check('heygen details list public voices', !r.err && r.json.voices.length === 1 && r.json.voices[0].voice_id === 'v1');
+r = await tool(env(), 'glbgpt_generate', { model: 'hidream-o1', prompt: 'x' });
+check('website media without token -> asks for GLBGPT_TOKEN', r.err && r.text.includes('GLBGPT_TOKEN'));
+r = await tool(envT(), 'glbgpt_generate', { model: 'made-up-media', prompt: 'x' });
+check('unknown everywhere -> the API error', r.err && r.text.includes('Unknown model'));
+r = await tool(envT(), 'glbgpt_generate', { model: 'hidream-o1', prompt: 'x', images: ['data:image/png;base64,AAAA'] });
+check('website media refuses data: URIs', r.err && r.text.includes('data:'));
+r = await tool(envT(), 'glbgpt_list_models', { type: '3d' });
+check('list models type 3d -> the five website 3D models', !r.err && r.json.models.length === 5 && r.json.models.every((m) => m.type === '3d' && m.usage));
 
 // generation
 reset();

@@ -239,6 +239,337 @@ const websiteModel = (id) => {
 const isModelMissing = (e) => e instanceof ToolError && e.status === 404;
 
 // ---------------------------------------------------------------------------
+// Website-only media models (images, videos, video tools, 3D, speech to text)
+// ---------------------------------------------------------------------------
+// Request formats read from glbgpt.com's page code on 21 Oct 2026. Each entry builds the body for
+// the website's own endpoint; `credits` is the website's listed price (approximate for videos).
+// Used only when the API doesn't know the model id.
+const WEB = "https://api2.glbgpt.com";
+const first = (a) => (Array.isArray(a.images) ? a.images : []);
+const meta = (a) => (a.metadata && typeof a.metadata === "object" ? a.metadata : {});
+const secs = (a, d) => (Number.isInteger(a.duration) && a.duration > 0 ? a.duration : d);
+const perSecond = (rate, d) => (a) => Math.round(rate * secs(a, d));
+const resOf = (a, d) => String(a.resolution || d);
+
+const hidream = (agentId, model, name, credits, { edit = false, noImages = false } = {}) => ({
+  name, type: "image", agentId, path: "/ai-api/ai/hidream/task/submit", credits: () => credits,
+  body: (a) => ({ model, prompt: a.prompt, ...(edit ? {} : { aspectRatio: a.aspect_ratio, resolution: a.resolution }), images: noImages ? [] : first(a).slice(0, edit ? 1 : 3) }),
+});
+const ideogram3 = (agentId, model, name, credits) => ({
+  name, type: "image", agentId, path: "/ai-api/ai/ideogram3/task/submit", credits: () => credits,
+  body: (a) => ({ image_request: { aspect_ratio: a.aspect_ratio || "1:1", prompt: a.prompt, model, style_type: meta(a).style_type || "AUTO", negative_prompt: a.negative_prompt || "" } }),
+});
+const anywhere = (agentId, model, name, maxImages, credits) => ({
+  name, type: "image", agentId, path: "/ai-api/ai/anywhere-image/task/submit", credits,
+  body: (a) => {
+    const images = first(a).slice(0, maxImages);
+    const mai = model.startsWith("mai-");
+    return { model, prompt: a.prompt, images, ...(!mai || !images.length ? { aspectRatio: a.aspect_ratio, resolution: a.resolution } : {}), ...(model === "krea-v3" ? { variant: meta(a).variant || "berry" } : {}) };
+  },
+});
+const videoTool = (agentId, model, name, rate, { image = false, maxSeconds } = {}) => ({
+  name, type: "video", agentId, path: "/ai-api/ai/video-tools/task/submit", needsDuration: !image,
+  credits: (a) => {
+    const r = typeof rate === "number" ? rate : rate[String(a.resolution || Object.keys(rate)[0]).toLowerCase()] ?? Object.values(rate)[0];
+    const s = image ? Math.ceil(String(a.prompt || "").trim().length / 12) || 1 : secs(a, 0);
+    return Math.round(r * 1000 * s);
+  },
+  body: (a) => {
+    const m = meta(a);
+    if (!image && !a.video_url) throw new ToolError(`${name} needs video_url (and duration: the input video's length in seconds).`);
+    if (!image && !secs(a, 0)) throw new ToolError(`${name} needs duration: the input video's length in seconds (it sets the price).`);
+    if (maxSeconds && secs(a, 0) > maxSeconds) throw new ToolError(`${name} takes videos up to ${maxSeconds} seconds.`);
+    if (image && !first(a)[0]) throw new ToolError(`${name} needs one portrait in images and the script as prompt.`);
+    return {
+      model, ...(image ? { image: first(a)[0] } : { video: a.video_url, durationSeconds: secs(a, 0) }),
+      resolution: a.resolution, aspectRatio: a.aspect_ratio, prompt: model === "video-translate" ? `Translate to ${m.outputLanguage || "English"}` : a.prompt,
+      voice: m.voice, voiceLanguage: m.voiceLanguage, voicePrompt: m.voicePrompt, outputLanguage: m.outputLanguage,
+    };
+  },
+});
+const threeD = (agentId, model, name, credits, { imagesRequired = false, maxImages = 4, noPrompt = false } = {}) => ({
+  name, type: "3d", agentId, path: "/ai-api/ai/3d/task/submit", credits: () => credits,
+  body: (a) => {
+    const images = first(a).slice(0, maxImages);
+    if (imagesRequired && !images.length) throw new ToolError(`${name} needs at least one image.`);
+    if (!images.length && !a.prompt) throw new ToolError(`${name} needs a prompt or an image.`);
+    return { model, ...(images.length ? { images } : {}), ...(!noPrompt && a.prompt ? { prompt: a.prompt } : {}), ...(Number.isInteger(a.seed) ? { seed: a.seed } : {}), ...meta(a) };
+  },
+});
+
+const WEBSITE_MEDIA_MODELS = {
+  // images
+  "ideogram-4.5": {
+    name: "Ideogram 4.5", type: "image", agentId: "6318", path: "/ai-api/ai/ideogram3/task/submit",
+    credits: (a) => ({ high: first(a).length ? 730 : 330, medium: 200, low: 100, very_low: 27 })[meta(a).quality || "high"] ?? 330,
+    body: (a) => {
+      const quality = meta(a).quality || "high";
+      const images = first(a).slice(0, 5);
+      if (quality === "very_low" && !images.length) throw new ToolError("Ideogram 4.5 quality very_low edits an image: pass one in images.");
+      return { image_request: { model: "Ideogram 4.5", prompt: a.prompt, quality, resolution: a.resolution || "", ...(a.aspect_ratio ? { aspect_ratio: a.aspect_ratio } : {}), ...(images.length ? { images } : {}) }, batch: 1, hidePrompt: 0 };
+    },
+  },
+  "ideogram-3.0": ideogram3("6083", "Ideogram 3.0 Default", "Ideogram 3.0", 200),
+  "ideogram-3.0-turbo": ideogram3("6082", "Ideogram 3.0 Turbo", "Ideogram 3.0 Turbo", 100),
+  "ideogram-3.0-quality": ideogram3("6084", "Ideogram 3.0 Quality", "Ideogram 3.0 Quality", 300),
+  "flux-3-klein": {
+    name: "FLUX.3 Klein", type: "image", agentId: "6307", path: "/ai-api/ai/flux/task/submit",
+    credits: (a) => ({ "768sq": 21, "1k": 24, "1.5k": 29, "2k": 37, "4k": 96 })[resOf(a, "1k").toLowerCase()] ?? 24,
+    body: (a) => ({ model: "flux-3-image-klein", prompt: a.prompt, images: first(a), aspect_ratio: String(a.aspect_ratio || "1:1").toLowerCase(), resolution: resOf(a, "1k").toLowerCase(), batch: 1 }),
+  },
+  "qwen-image-3.0": anywhere("6308", "qwen-image-3.0", "Qwen Image 3.0", 3, (a) => 100 + 10 * first(a).slice(0, 3).length),
+  "qwen-image-3.0-pro": anywhere("6309", "qwen-image-3.0-pro", "Qwen Image 3.0 Pro", 3, (a) => (resOf(a, "1K").toUpperCase() === "2K" ? 250 : 133) + 10 * first(a).slice(0, 3).length),
+  "krea-3": anywhere("6310", "krea-v3", "Krea 3", 8, (a) => ({ "0.5K": 25, "2K": 400 })[resOf(a, "1K").toUpperCase()] ?? 100),
+  "mai-image-2.6": anywhere("6311", "mai-image-2.6", "MAI Image 2.6", 5, (a) => (first(a).length ? 104 + 21 * first(a).slice(0, 5).length : resOf(a, "1K").toUpperCase() === "2K" ? 233 : 104)),
+  "mai-image-2.6-flash": anywhere("6312", "mai-image-2.6-flash", "MAI Image 2.6 Flash", 5, (a) => (first(a).length ? 52 + 7 * first(a).slice(0, 5).length : resOf(a, "1K").toUpperCase() === "2K" ? 117 : 52)),
+  "hidream-o1": hidream("6249", "hidream-o1-image", "HiDream O1", 133),
+  "hidream-o1-dev": hidream("6248", "hidream-o1-image-dev", "HiDream O1 Dev", 67),
+  "hidream-e1-full": hidream("6247", "hidream-e1-full", "HiDream E1 Full (edit one image)", 80, { edit: true }),
+  "hidream-i1-full": hidream("6246", "hidream-i1-full", "HiDream I1 Full", 80, { noImages: true }),
+  "hidream-i1-dev": hidream("6245", "hidream-i1-dev", "HiDream I1 Dev", 40, { noImages: true }),
+  "midjourney": {
+    name: "Midjourney", type: "image", agentId: 4115, path: "/ai-api/ai/zeakai/mj/submit/imagine", credits: () => 100,
+    body: (a) => {
+      const m = meta(a);
+      const req = { prompt: a.prompt, aspect: a.aspect_ratio, style: m.style, view: m.view, characterShot: m.characterShot, lighting: m.lighting, imageQuality: m.imageQuality, artisticLevel: m.artisticLevel, version: m.version, cw: m.cw, sref: m.sref, cref: m.cref, model: "mj-zeakai-imagine" };
+      return { image_request: Object.fromEntries(Object.entries(req).filter(([, v]) => v !== undefined && v !== null && v !== "")), fileList: [], conversationId: "" };
+    },
+  },
+  "ai-poster": {
+    name: "AI Poster", type: "image", agentId: "6140", path: "/ai-api/ai/tools/poster/generate", credits: () => 400,
+    body: (a) => ({ prompt: a.prompt, aspectRatio: a.aspect_ratio || "3:4", textBlocks: meta(a).textBlocks || [], usageContext: meta(a).usageContext || "" }),
+  },
+  "ai-product-images": {
+    name: "AI Product Images", type: "image", agentId: "6141", path: "/ai-api/ai/tools/product-images/generate", credits: () => 400,
+    body: (a) => {
+      if (!first(a)[0]) throw new ToolError("AI Product Images needs the product photo in images.");
+      return { referenceImageUrl: first(a)[0], aspectRatio: a.aspect_ratio || "1:1", usageContext: meta(a).usageContext || "", prompt: a.prompt, text: meta(a).text || "", textPosition: meta(a).textPosition || "" };
+    },
+  },
+  // videos
+  "veo3": {
+    name: "Veo 3", type: "video", agentId: "6003", path: "/ai-api/ai/openai-next/veo3/task/submit", credits: () => 1500,
+    body: (a) => ({ model: "veo3", prompt: a.prompt, seed: 0, image: first(a)[0], aspectRatio: a.aspect_ratio || "16:9", duration: 5, negativePrompt: a.negative_prompt || "", resolution: a.resolution, hidePrompt: 0 }),
+  },
+  "kling-o1": {
+    name: "Kling O1", type: "video", agentId: "6157", path: "/ai-api/ai/klingO1/task/submit", credits: perSecond(200, 5),
+    body: (a) => ({
+      model: "kling-video-o1", prompt: String(a.prompt || "").replace(/@Image(\d+)/g, "<<<image_$1>>>"), resolution: a.resolution || "720p", duration: secs(a, 5), aspect_ratio: a.aspect_ratio || "16:9",
+      ...(first(a).length ? { imageUrls: JSON.stringify(first(a).slice(0, 2)) } : {}),
+      ...(a.video_url ? { videoList: JSON.stringify([{ video_url: a.video_url, refer_type: "base", keep_original_sound: "yes" }]) } : {}), hidePrompt: 0,
+    }),
+  },
+  "wan3.0-video-prime": {
+    name: "Wan 3.0 Prime", type: "video", agentId: "6215", path: "/ai-api/ai/wan30/task/submit", credits: perSecond(160, 5),
+    body: (a) => ({ model: "wan3.0-video-prime", prompt: a.prompt, duration: secs(a, 5), resolution: a.resolution || "720P", ratio: a.aspect_ratio || "adaptive", ...(first(a).length ? { images: first(a).slice(0, 2) } : {}), generateAudio: !!a.audio, hidePrompt: 0 }),
+  },
+  "wan-2.7": {
+    name: "Wan 2.7", type: "video", agentId: "6165", path: "/ai-api/ai/ali-wan/27/task/submit", credits: perSecond(200, 5),
+    body: (a) => ({ model: "wan-2.7", prompt: a.prompt, resolution: a.resolution || "720P", ratio: a.aspect_ratio || "16:9", duration: secs(a, 5), ...(first(a).length ? { keyframes: first(a).slice(0, 2) } : {}), hidePrompt: 0 }),
+  },
+  "wan-2.6": {
+    name: "Wan 2.6", type: "video", agentId: "6118", credits: perSecond(200, 5),
+    route: (a) => (a.video_url ? ["6120", "wan2.6-r2v", "r2v"] : first(a).length ? ["6119", "wan2.6-i2v", "i2v"] : ["6118", "wan2.6-t2v", "t2v"]),
+    path: (a) => `/ai-api/ai/ali-wan26/${WEBSITE_MEDIA_MODELS["wan-2.6"].route(a)[2]}/task/submit`,
+    body: (a) => {
+      const [agentId, model] = WEBSITE_MEDIA_MODELS["wan-2.6"].route(a);
+      return { agentId, model, prompt: a.prompt, image: first(a)[0] || "", reference_video_urls: a.video_url ? [a.video_url] : null, duration: secs(a, 5), size: a.aspect_ratio || "16:9", resolution: a.resolution || "720P", shot_type: meta(a).shot_type || "single", hidePrompt: 0 };
+    },
+  },
+  "seedance-1.0-pro": {
+    name: "Seedance 1.0 Pro", type: "video", agentId: "6022", credits: perSecond(400, 5),
+    path: (a) => `/ai-api/ai/wavespeed/seedance-${first(a).length ? "i2v" : "t2v"}/task/submit`,
+    body: (a) => ({ agentId: first(a).length ? "6020" : "6022", model: first(a).length ? "seedance-v1-pro-i2v-1080p" : "seedance-v1-pro-t2v-1080p", prompt: a.prompt, aspectRatio: a.aspect_ratio || "16:9", duration: secs(a, 5), image: first(a)[0] }),
+  },
+  "heygen-video": { name: "HeyGen Video (avatar)", type: "video", agentId: "6241", heygen: true },
+  // video tools
+  "video-upscale": videoTool("6220", "video-upscale", "Video Upscale", { "720p": 0.0354, "1080p": 0.1247, "4k": 0.498 }, { maxSeconds: 300 }),
+  "video-sound": videoTool("6221", "video-sound-fx", "Video Sound", 0.0015, { maxSeconds: 900 }),
+  "video-reframe": videoTool("6222", "video-expand", "Video Reframe", 0.2, { maxSeconds: 10 }),
+  "talking-photo": videoTool("6223", "talking-photo", "Talking Photo", { "720p": 0.0832, "1080p": 0.15 }, { image: true }),
+  "video-translate": videoTool("6224", "video-translate", "Video Translator", 0.222, { maxSeconds: 900 }),
+  // 3D
+  "hunyuan-3d-3.1": threeD("6231", "hunyuan3d-v3.1", "Hunyuan 3D 3.1", 100, { maxImages: 1 }),
+  "tripo-h3.1": threeD("6233", "tripo-h3.1", "Tripo h3.1", 330),
+  "meshy-7": threeD("6232", "meshy-v7", "Meshy 7", 1760),
+  "trellis-3d": threeD("6229", "trellis-3d", "TRELLIS 3D", 500, { imagesRequired: true, maxImages: 5, noPrompt: true }),
+  "rodin-gen-2": threeD("6230", "rodin-gen2", "Rodin Gen-2", 1400, { maxImages: 5 }),
+  // speech to text
+  "scribe-v2": {
+    name: "Scribe v2 (speech to text)", type: "speech-to-text", agentId: "6175", path: "/ai-api/voice/elevenlabs/task/submit",
+    credits: (a) => 12 * Math.max(1, Math.ceil(secs(a, 60) / 60)),
+    body: (a) => { if (!a.video_url && !first(a)[0]) throw new ToolError("Scribe needs the audio file's URL in video_url."); return { type: 2, inputSourceUrl: a.video_url, model: "scribe_v2" }; },
+  },
+  "scribe-v1": {
+    name: "Scribe v1 (speech to text)", type: "speech-to-text", agentId: "6038", path: "/ai-api/voice/elevenlabs/task/submit",
+    credits: (a) => 12 * Math.max(1, Math.ceil(secs(a, 60) / 60)),
+    body: (a) => { if (!a.video_url) throw new ToolError("Scribe needs the audio file's URL in video_url."); return { type: 2, inputSourceUrl: a.video_url, model: "scribe_v1" }; },
+  },
+};
+// How to call each website-only media model (shown by glbgpt_list_models).
+const WEBSITE_MEDIA_HINTS = {
+  "ideogram-4.5": "prompt; aspect_ratio; images (up to 5) to edit; metadata.quality high|medium|low|very_low (very_low needs an image)",
+  "ideogram-3.0": "prompt; aspect_ratio; negative_prompt; metadata.style_type (AUTO, GENERAL, REALISTIC, DESIGN, RENDER_3D, ANIME)",
+  "ideogram-3.0-turbo": "prompt; aspect_ratio; negative_prompt; metadata.style_type",
+  "ideogram-3.0-quality": "prompt; aspect_ratio; negative_prompt; metadata.style_type",
+  "flux-3-klein": "prompt; aspect_ratio; resolution 768sq|1k|1.5k|2k|4k; images as references",
+  "qwen-image-3.0": "prompt; aspect_ratio; resolution; up to 3 images", "qwen-image-3.0-pro": "prompt; aspect_ratio; resolution 1K|2K; up to 3 images",
+  "krea-3": "prompt; aspect_ratio; resolution 0.5K|1K|2K; up to 8 images; metadata.variant berry|jam",
+  "mai-image-2.6": "prompt; aspect_ratio; resolution 1K|2K (ignored with images); up to 5 images", "mai-image-2.6-flash": "prompt; aspect_ratio; resolution 1K|2K (ignored with images); up to 5 images",
+  "hidream-o1": "prompt; aspect_ratio; resolution; up to 3 images", "hidream-o1-dev": "prompt; aspect_ratio; resolution; up to 3 images",
+  "hidream-e1-full": "prompt = the edit instruction; exactly 1 image", "hidream-i1-full": "prompt; aspect_ratio; resolution (text only)", "hidream-i1-dev": "prompt; aspect_ratio; resolution (text only)",
+  "midjourney": "prompt (Midjourney flags like --v work); aspect_ratio; metadata style, version, sref, cref, cw; returns the 2x2 grid",
+  "ai-poster": "prompt; aspect_ratio; metadata.textBlocks (text to print), metadata.usageContext",
+  "ai-product-images": "images[0] = the product photo; prompt; aspect_ratio; metadata.text, textPosition, usageContext",
+  "veo3": "prompt; aspect_ratio 16:9|9:16; resolution; images[0] as start frame; fixed 5 s",
+  "kling-o1": "prompt (refer to images as @Image1); resolution; duration; aspect_ratio; up to 2 images (first/last frame); video_url to edit a video",
+  "wan3.0-video-prime": "prompt; duration; resolution 480P|720P|1080P; aspect_ratio (default adaptive); up to 2 images (first/last frame); audio",
+  "wan-2.7": "prompt; duration; resolution; aspect_ratio; up to 2 images as keyframes",
+  "wan-2.6": "prompt; duration; resolution; aspect_ratio; images[0] = image to video; video_url = reference video; metadata.shot_type single|multi",
+  "seedance-1.0-pro": "prompt; duration 5|10; aspect_ratio; images[0] = image to video",
+  "heygen-video": "talking avatar: images[0] = portrait (or metadata.avatar_id), prompt = script, metadata.voice_id (see this model's voices), metadata.speed 0.5-1.5; or metadata.audio_url instead of script; aspect_ratio 16:9|9:16|1:1|4:5|5:4",
+  "video-upscale": "video_url; duration = the input's length in seconds; resolution 720p|1080p|4k",
+  "video-sound": "video_url; duration = the input's length in seconds; prompt = the sounds you want",
+  "video-reframe": "video_url (up to 10 s); duration = its length; aspect_ratio = the new frame; prompt optional",
+  "talking-photo": "images[0] = portrait; prompt = script; resolution 720p|1080p; metadata.voice (e.g. 'Zephyr (Female)')",
+  "video-translate": "video_url (mp4); duration = its length in seconds; metadata.outputLanguage (e.g. Spanish)",
+  "hunyuan-3d-3.1": "prompt or images[0]; returns a GLB", "tripo-h3.1": "prompt or 1-4 images (front, left, back, right); metadata options (texture, pbr, quad, faceLimit, ...)",
+  "meshy-7": "prompt or 1-4 images; metadata options (topology, targetPolycount, enablePbr, enableRigging, enableAnimation, ...)",
+  "trellis-3d": "1-5 images of the same object (no prompt)", "rodin-gen-2": "prompt and/or up to 5 images; metadata options (quality, material, geometryFileFormat, ...)",
+  "scribe-v2": "video_url = URL of the audio or video file; duration = its length in seconds (for the price); returns a transcript file", "scribe-v1": "same as scribe-v2 (older model)",
+};
+const websiteMediaEntry = (w) => ({
+  id: w.id, type: w.type, source: "website", description: `${w.name} (only on GlobalGPT's website)`, usage: WEBSITE_MEDIA_HINTS[w.id],
+  ...(w.heygen ? { price: "quoted per video (about 1,000 credits per minute)" } : { price_from: Math.round(Number(w.credits({ prompt: "x", duration: 5 })) || 0) }),
+});
+
+// Prices the website shows only as a range (or that depend on the input's length).
+const APPROX_PRICE = new Set(["kling-o1", "wan3.0-video-prime", "wan-2.7", "wan-2.6", "seedance-1.0-pro", "tripo-h3.1", "meshy-7", "scribe-v2", "scribe-v1"]);
+const WEBSITE_MEDIA_ALIASES = { "krea-v3": "krea-3", "flux-3-image-klein": "flux-3-klein", "veo-3": "veo3", "kling-video-o1": "kling-o1", "wan-3.0-prime": "wan3.0-video-prime", "wan2.6": "wan-2.6", "seedance-v1-pro": "seedance-1.0-pro", "heygen": "heygen-video", "meshy-v7": "meshy-7", "hunyuan3d-v3.1": "hunyuan-3d-3.1", "rodin-gen2": "rodin-gen-2", "scribe": "scribe-v2", "scribe_v2": "scribe-v2", "scribe_v1": "scribe-v1", "video-sound-fx": "video-sound", "video-expand": "video-reframe" };
+const websiteMedia = (id) => {
+  const key = String(id || "").trim().toLowerCase();
+  const k = WEBSITE_MEDIA_ALIASES[key] ?? key;
+  return WEBSITE_MEDIA_MODELS[k] ? { id: k, ...WEBSITE_MEDIA_MODELS[k] } : null;
+};
+
+// Calls on the website's internal API, signed with the login token. Business errors come as HTTP 200 + {code}.
+async function webRequest(env, method, url, body) {
+  if (!env.GLBGPT_TOKEN) throw new ToolError("This model is only on GlobalGPT's website, which needs GLBGPT_TOKEN (your login token) on the Worker.");
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: { Authorization: `Bearer ${env.GLBGPT_TOKEN}`, "User-Agent": UA, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    throw new ToolError(`Couldn't reach GlobalGPT's website: ${e && e.message}`);
+  }
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch {}
+  const err = websiteError(res.status, data) ?? (data?.error?.code ? `GlobalGPT's website refused it: ${data.error.code}` : null);
+  if (err) throw new ToolError(err);
+  if (data === null) throw new ToolError(`GlobalGPT's website answered HTTP ${res.status} without JSON.`);
+  return data;
+}
+
+const webTaskId = (data) => data?.taskId ?? data?.data?.taskId ?? data?.data?.id;
+
+// One website task's state, in the same shape as the API's task view.
+async function webTask(env, id) {
+  const data = await webRequest(env, "POST", `${WEB}/ai-api/ai/task/get`, { taskId: id });
+  const t = data?.task;
+  if (!t) throw new ToolError(`No website task found with id ${id}.`);
+  if (t.status === "success") return { status: "succeeded", url: t.outputFileUrl, type: t.mediaType === 2 ? "video" : t.mediaType === 3 ? "audio" : "image" };
+  if (t.status === "failed") return { status: "failed", reason: str(t.failedReasonShort) ?? str(t.failedReason) ?? str(t.errorCode) ?? "The generation failed." };
+  return { status: "processing" };
+}
+
+async function heygenOperation(env, id) {
+  const data = await webRequest(env, "GET", `${WEB}/ai-api/ai/heygen/operations/${encodeURIComponent(id)}`);
+  const op = data?.operation ?? data?.data?.operation;
+  const d = data?.data ?? {};
+  if (op?.status === "succeeded") return { status: "succeeded", url: d.video_url ?? data?.video_url, type: "video" };
+  if (op?.status === "failed") return { status: "failed", reason: str(d.failure_message) ?? "The HeyGen video failed." };
+  return { status: "processing" };
+}
+
+// Submit a website-only model; returns the first task view (with credits counted).
+async function websiteGenerate(ctx, w, a, limit) {
+  const env = ctx.env;
+  if (!env.GLBGPT_TOKEN) throw new ToolError(`${w.name} is only on GlobalGPT's website, which needs GLBGPT_TOKEN (your login token) on the Worker.`);
+  if (first(a).some((u) => /^data:/i.test(u))) throw new ToolError(`${w.name} is only on GlobalGPT's website, which takes images as public https URLs, not data: URIs.`);
+  const isTool = typeof w.path === "string" && w.path.includes("video-tools");
+  if ((w.type === "image" || w.type === "video") && !w.heygen && !isTool && !str(a.prompt)) throw new ToolError(`${w.name} needs a prompt.`);
+  let body, credits, submit;
+  if (w.heygen) {
+    const m = meta(a);
+    const input = {
+      ...(m.avatar_id ? { type: "avatar", avatar_id: m.avatar_id, engine: { type: "avatar_iv" } } : first(a)[0] ? { type: "image", image: { type: "url", url: first(a)[0] } } : (() => { throw new ToolError("HeyGen needs a portrait in images, or metadata.avatar_id from its avatar library."); })()),
+      ...(m.audio_url ? { audio_url: m.audio_url } : str(a.prompt) && m.voice_id ? { script: a.prompt, voice_id: m.voice_id, voice_settings: { speed: Number(m.speed) || 1 } } : (() => { throw new ToolError("HeyGen needs the script as prompt and metadata.voice_id (glbgpt_list_models with model heygen-video lists the voices), or metadata.audio_url."); })()),
+      resolution: "1080p", aspect_ratio: a.aspect_ratio || "16:9", output_format: "mp4", ...(m.motion_prompt ? { motion_prompt: m.motion_prompt } : {}),
+    };
+    const quote = await webRequest(env, "POST", `${WEB}/ai-api/ai/heygen/quotes/video`, input);
+    credits = Math.ceil(1000 * (Number(quote?.data?.estimated_amount) || 0));
+    submit = async () => {
+      const r = await webRequest(env, "POST", `${WEB}/ai-api/ai/heygen/videos`, { requestId: crypto.randomUUID(), input });
+      const id = r?.operation?.id ?? r?.data?.operation?.id;
+      if (!id) throw new ToolError("HeyGen didn't return an operation id.");
+      return `heygen:${id}`;
+    };
+  } else {
+    const b = w.body(a);
+    body = { ...b, productNo: "glbgpt", agentId: b.agentId ?? w.agentId, shareStatus: 0, enhancePrompt: false };
+    credits = Math.max(0, Math.round(Number(w.credits(a)) || 0));
+    const url = WEB + (typeof w.path === "function" ? w.path(a) : w.path);
+    submit = async () => {
+      const r = await webRequest(env, "POST", url, body);
+      const id = webTaskId(r);
+      if (!id) throw new ToolError(`GlobalGPT's website didn't return a task id${str(r?.message) ? `: ${r.message}` : ""}.`);
+      return `web:${id}`;
+    };
+  }
+  const reserved = await limit.reserve(credits);
+  let taskId;
+  try {
+    taskId = await submit();
+  } catch (e) {
+    if (reserved) await limit.add(-reserved).catch(() => {});
+    throw e;
+  }
+  if (reserved) await limit.remember(taskId, reserved).catch(() => {});
+  return { taskId, credits };
+}
+
+// Poll a website task (web:<id> or heygen:<id>) until it finishes or the deadline passes.
+async function waitForWebTask(env, limit, taskId, deadline) {
+  const [kind, id] = [taskId.slice(0, taskId.indexOf(":")), taskId.slice(taskId.indexOf(":") + 1)];
+  for (;;) {
+    let t;
+    try {
+      t = kind === "heygen" ? await heygenOperation(env, id) : await webTask(env, id);
+    } catch (e) {
+      if (/No website task|login token|GLBGPT_TOKEN/.test(e.message)) throw e;
+      return { task_id: taskId, status: "processing", via: "website", note: "Couldn't reach GlobalGPT just now. Call glbgpt_check_task again." };
+    }
+    if (t.status === "succeeded") {
+      if (!t.url) throw new ToolError("The task succeeded but returned no URL.");
+      await limit.kv?.delete(`task:${taskId}`).catch(() => {});
+      return { task_id: taskId, status: "succeeded", url: t.url, type: t.type, via: "website" };
+    }
+    if (t.status === "failed") {
+      await limit.release(taskId).catch(() => {});
+      throw new ToolError(`${t.reason} (website task)`);
+    }
+    if (Date.now() + POLL_MS > deadline) {
+      return { task_id: taskId, status: "processing", via: "website", note: "Still running. Call glbgpt_check_task with this task_id again right away (the server waits inside each call). Don't tell the user it's done yet." };
+    }
+    await sleep(POLL_MS);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Daily credit limit (KV counter per day in LIMIT_TIMEZONE)
 // ---------------------------------------------------------------------------
 // DAILY_CREDIT_LIMIT: not set -> no limit; a number -> at most that many credits per day.
@@ -333,7 +664,7 @@ const TOOLS = [
   {
     name: "glbgpt_generate",
     title: "GlobalGPT generation (image, video, audio)",
-    description: "Generate an image, video or audio clip (speech, music), or run an image tool (remove-bg, hd-upscale, face-swap, ...). Spends credits from the owner's GlobalGPT account; the price is checked first, and the owner may have set a daily credit limit. Parameters depend on the model: see glbgpt_list_models. Fields a model doesn't take are dropped and listed in ignored_parameters. Returns the finished url, or a task_id for glbgpt_check_task.",
+    description: "Generate an image, video, audio clip (speech, music) or 3D model, transcribe audio, or run an image or video tool (remove-bg, hd-upscale, face-swap, video-upscale, talking-photo, ...). Spends credits from the owner's GlobalGPT account; the price is checked first, and the owner may have set a daily credit limit. Parameters depend on the model: see glbgpt_list_models. Fields a model doesn't take are dropped and listed in ignored_parameters. Returns the finished url, or a task_id for glbgpt_check_task.",
     inputSchema: {
       type: "object",
       properties: {
@@ -375,7 +706,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        type: { type: "string", enum: ["chat", "image", "video", "audio"], description: "Only list this kind of model." },
+        type: { type: "string", enum: ["chat", "image", "video", "audio", "3d", "speech-to-text"], description: "Only list this kind of model." },
         model: { type: "string", description: "Show one model's details instead of a list." },
       },
       additionalProperties: false,
@@ -462,7 +793,17 @@ async function generate(ctx, a) {
   const limit = new CreditLimit(ctx.env);
   limit.check();
 
-  const est = await g.estimate(body);
+  let est;
+  try {
+    est = await g.estimate(body);
+  } catch (e) {
+    // Not in the API, but on the website: submit it there instead.
+    const w = isModelMissing(e) ? websiteMedia(body.model) : null;
+    if (!w) throw e;
+    const { taskId, credits } = await websiteGenerate(ctx, w, body, limit);
+    const result = await waitForWebTask(ctx.env, limit, taskId, Date.now() + WAIT_MS);
+    return { ...result, model: w.id, credits_estimated: credits, ...(APPROX_PRICE.has(w.id) ? { price_note: "estimated from the website's list price; GlobalGPT bills the exact amount" } : {}) };
+  }
   const estimate = Math.max(0, Number(est?.credits) || 0);
   const reserved = await limit.reserve(estimate);
 
@@ -553,6 +894,7 @@ const handlers = {
   async glbgpt_check_task(ctx, a) {
     const taskId = str(a.task_id);
     if (!taskId) throw new ToolError("task_id is required.");
+    if (/^(web|heygen):/.test(taskId)) return waitForWebTask(ctx.env, new CreditLimit(ctx.env), taskId, Date.now() + WAIT_MS);
     return waitForTask(new GlobalGPT(ctx.env), new CreditLimit(ctx.env), taskId, Date.now() + WAIT_MS);
   },
   async glbgpt_list_models(ctx, a) {
@@ -564,12 +906,31 @@ const handlers = {
       try {
         return await g.model(str(a.model));
       } catch (e) {
-        const w = isModelMissing(e) ? websiteModel(a.model) : null;
-        if (!w) throw e;
-        return { ...websiteEntry(w), available: !!ctx.env.GLBGPT_TOKEN };
+        if (!isModelMissing(e)) throw e;
+        const w = websiteModel(a.model);
+        if (w) return { ...websiteEntry(w), available: !!ctx.env.GLBGPT_TOKEN };
+        const wm = websiteMedia(a.model);
+        if (!wm) throw e;
+        const out = { ...websiteMediaEntry(wm), available: !!ctx.env.GLBGPT_TOKEN };
+        if (wm.heygen && ctx.env.GLBGPT_TOKEN) {
+          try {
+            const v = await webRequest(ctx.env, "GET", `${WEB}/ai-api/ai/heygen/voices?type=public&limit=100`);
+            out.voices = (Array.isArray(v?.data) ? v.data : []).filter((x) => x?.voice_id && x.type !== "private").map((x) => ({ voice_id: x.voice_id, name: x.name, language: x.language, gender: x.gender }));
+          } catch (err) { out.voices = `Couldn't load voices: ${err.message}`; }
+        }
+        return out;
       }
     }
-    const models = list(await g.models(a.type));
+    const apiTypes = ["chat", "image", "video", "audio"];
+    const models = !a.type || apiTypes.includes(a.type) ? list(await g.models(a.type)) : [];
+    // Media models only on the website, when the login token is set.
+    if (ctx.env.GLBGPT_TOKEN) {
+      const have = new Set(models.map((m) => String(m.id).toLowerCase()));
+      for (const id of Object.keys(WEBSITE_MEDIA_MODELS)) {
+        const w = websiteMedia(id);
+        if (!have.has(id) && (!a.type || a.type === w.type)) models.push(websiteMediaEntry(w));
+      }
+    }
     // Chat models the API doesn't list but the website has, when the login token is set.
     if (ctx.env.GLBGPT_TOKEN && (!a.type || a.type === "chat")) {
       const have = new Set(models.map((m) => String(m.id).toLowerCase()));

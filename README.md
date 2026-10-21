@@ -11,7 +11,7 @@ It uses GlobalGPT's official [API](https://www.glbgpt.com/home/api/docs) with yo
 | Tool | What it does |
 |---|---|
 | `glbgpt_chat` | One question to a chat model, optionally with a system prompt, images, or a JSON Schema for JSON answers |
-| `glbgpt_generate` | Image, video or audio (speech, music), or an image tool (remove-bg, hd-upscale, face-swap, …) with any model the API lists |
+| `glbgpt_generate` | Image, video, audio, 3D or a transcript, or an image or video tool, with any model the API lists or the website-only ones |
 | `glbgpt_check_task` | Waits for a running generation and returns its URL |
 | `glbgpt_list_models` | GlobalGPT's live model list with prices and parameters, or one model's details |
 | `glbgpt_usage` | The connector's daily limit and today's spend, plus your recent generations |
@@ -21,6 +21,8 @@ Every generation is priced with GlobalGPT's estimate first, then submitted with 
 GlobalGPT's API limits: 60 requests per minute, 5 chat streams and 10 media tasks at once, per account. It only spends paid credits.
 
 **Website-only chat models.** glbgpt.com has chat models the API doesn't offer (e.g. Claude Opus 5.5, GPT-6.1 Sol, Gemini 4 Argon). With the optional `GLBGPT_TOKEN` set, `glbgpt_chat` sends a model the API refuses through the website's own chat instead, and `glbgpt_list_models` lists those models with `source: "website"`. They take text only (no images), each message becomes a conversation in your glbgpt.com history, and the website adds its own system prompt, so a message costs more than through the API. A model GlobalGPT later adds to the API automatically goes through the API again.
+
+**Website-only media.** The same token also unlocks the website's images, videos, video tools, 3D models and speech to text that the API lacks (Midjourney, Kling O1, Veo 3, HeyGen avatar videos, Tripo/Meshy 3D, Scribe, …, see [MODELS.md](MODELS.md)). `glbgpt_generate` sends them through the website's own endpoints; task ids start with `web:` or `heygen:`. Their prices come from the website's list, so the daily credit counter is an estimate for them.
 
 ## Setup
 

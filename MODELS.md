@@ -4,9 +4,10 @@ Snapshot of what this connector can use, checked on **21 October 2026**. GlobalG
 
 - **API**: GlobalGPT's official API, with `GLBGPT_API_KEY`. Prices are GlobalGPT's API prices in credits (media: the price at the model's default settings; resolution, duration and audio change it).
 - **Website**: chat models only on glbgpt.com, reached through the website's chat with `GLBGPT_TOKEN` (text only, no images; each message lands in your glbgpt.com history).
+- **Website media**: images, videos, tools, 3D and speech to text only on glbgpt.com, also through `GLBGPT_TOKEN`.
 - **Not supported**: on glbgpt.com, but not reachable through this connector (yet).
 
-Totals: **103 through the API** (42 chat, 29 image, 21 video, 11 audio) and **18 more chat models through the website**.
+Totals: **103 through the API** (42 chat, 29 image, 21 video, 11 audio), **18 more chat models through the website**, and **37 website-only media models and tools** (not yet tested live).
 
 ## Chat
 
@@ -182,32 +183,39 @@ Price in credits per video, at the default resolution and length.
 | Google Lyria 3 Clip | `lyria-3-clip` | 133 |
 | Google Lyria 3 Pro | `lyria-3-pro` | 267 |
 
+## Website-only media (needs `GLBGPT_TOKEN`)
+
+Images, videos, tools, 3D and speech to text that only glbgpt.com has. `glbgpt_generate` sends them through the website's own endpoints with your login token, using the request formats read from the website's code on 21 October 2026. `glbgpt_list_models` shows each one's inputs (`usage`).
+
+**Status: wired up and tested against a mock, not yet tested live.** Prices are the website's list prices; for videos they're estimates (GlobalGPT bills the exact amount).
+
+| Kind | Model | ID | From (credits) |
+|---|---|---|---|
+| Image | Ideogram 4.5 | `ideogram-4.5` | 27 (very low) to 730 |
+| Image | Ideogram 3.0 / Turbo / Quality | `ideogram-3.0` / `ideogram-3.0-turbo` / `ideogram-3.0-quality` | 200 / 100 / 300 |
+| Image | Midjourney | `midjourney` | 100 |
+| Image | MAI Image 2.6 / 2.6 Flash | `mai-image-2.6` / `mai-image-2.6-flash` | 104 / 52 |
+| Image | Krea 3 | `krea-3` | 25 (0.5K) |
+| Image | Qwen Image 3.0 / 3.0 Pro | `qwen-image-3.0` / `qwen-image-3.0-pro` | 100 / 133 |
+| Image | FLUX.3 Klein | `flux-3-klein` | 21 (768sq) |
+| Image | HiDream O1 / O1 Dev / E1 Full / I1 Full / I1 Dev | `hidream-o1` / `hidream-o1-dev` / `hidream-e1-full` / `hidream-i1-full` / `hidream-i1-dev` | 133 / 67 / 80 / 80 / 40 |
+| Image tool | AI Poster / AI Product Images | `ai-poster` / `ai-product-images` | 400 / 400 |
+| Video | Veo 3 | `veo3` | 1,500 |
+| Video | Kling O1 | `kling-o1` | about 200 per second |
+| Video | Wan 3.0 Prime | `wan3.0-video-prime` | about 160 per second |
+| Video | Wan 2.7 / Wan 2.6 | `wan-2.7` / `wan-2.6` | about 200 per second |
+| Video | Seedance 1.0 Pro | `seedance-1.0-pro` | 2,000 (5 s) |
+| Video | HeyGen avatar video | `heygen-video` | quoted per video (about 1,000 per minute) |
+| Video tool | Video Upscale | `video-upscale` | 35 / 125 / 498 per second (720p / 1080p / 4K) |
+| Video tool | Video Sound | `video-sound` | 1.5 per second |
+| Video tool | Video Reframe | `video-reframe` | 200 per second |
+| Video tool | Talking Photo | `talking-photo` | 83 / 150 per second of speech |
+| Video tool | Video Translator | `video-translate` | 222 per second |
+| 3D | Hunyuan 3D 3.1 / Tripo h3.1 / Meshy 7 / TRELLIS 3D / Rodin Gen-2 | `hunyuan-3d-3.1` / `tripo-h3.1` / `meshy-7` / `trellis-3d` / `rodin-gen-2` | 100 / 330 / 1,760 / 500 / 1,400 |
+| Speech to text | Scribe v2 / v1 | `scribe-v2` / `scribe-v1` | 12 per minute |
+
 ## Not supported
 
-On glbgpt.com, but not reachable through this connector. The website ID is GlobalGPT's internal name, for reference.
-
-**Could be added later** through the website, like the chat models (each needs its own request format and one paid test):
-
-| Kind | Model or tool | Website ID |
-|---|---|---|
-| Image | Ideogram 4.5 | `Ideogram 4.5` |
-| Image | Ideogram 3.0 / Turbo / Quality | `Ideogram 3.0 Default` / `Ideogram 3.0 Turbo` / `Ideogram 3.0 Quality` |
-| Image | Midjourney | (agent 4115) |
-| Image | MAI Image 2.6 / 2.6 Flash | `mai-image-2.6` / `mai-image-2.6-flash` |
-| Image | Krea 3 | `krea-v3` |
-| Image | Qwen Image 3.0 / 3.0 Pro | `qwen-image-3.0` / `qwen-image-3.0-pro` |
-| Image | FLUX.3 Klein | `flux-3-image-klein` |
-| Image | HiDream O1 / O1 Dev / E1 Full / I1 Full / I1 Dev | `hidream-o1-image` / `hidream-o1-image-dev` / `hidream-e1-full` / `hidream-i1-full` / `hidream-i1-dev` |
-| Image tool | AI Poster, AI Product Images, Logo Maker | `AI Poster` / `AI Product Images` / `logo-maker` |
-| Video | Veo 3 | `veo3` |
-| Video | Kling O1 | `kling-video-o1` |
-| Video | Wan 3.0 Prime | `wan3.0-video-prime` |
-| Video | Wan 2.7 / Wan 2.6 | `wan-2.7` / `wan2.6-t2v` |
-| Video | Seedance 1.0 Pro | `seedance-v1-pro-t2v-1080p` |
-| Video | HeyGen Video (avatars) | `heygen-video` |
-| Video tool | Video Upscale, Video Sound, Video Reframe, Talking Photo, Video Translator | `video-upscale` / `video-sound-fx` / `video-expand` / `talking-photo` / `video-translate` |
-| 3D | Tripo h3.1, Meshy 7, Hunyuan 3D 3.1, Rodin Gen-2, TRELLIS 3D | `tripo-h3.1` / `meshy-v7` / `hunyuan3d-v3.1` / `rodin-gen2` / `trellis-3d` |
-| Speech to text | Scribe v1 | `scribe_v1` |
-| Detection | AI Detector, AI Image Detector, AI Video Detector | `AIDetector` / `ai-image-detector` / `ai-video-detector` |
-
-**Not suitable as connector tools**: these are whole apps on the website, not single requests: Yukie, Agentic Canvas, GlobalClaw, Deep Research, ChatPDF, AI Translate, AI Note Taker.
+- **AI Detector, AI Image Detector, AI Video Detector**: they need files uploaded into GlobalGPT's media library first (and a frame upload for videos); could be added later.
+- **Logo Maker**: not looked at yet.
+- **Whole apps, not suitable as connector tools**: Yukie, Agentic Canvas, GlobalClaw, Deep Research, ChatPDF, AI Translate, AI Note Taker.
