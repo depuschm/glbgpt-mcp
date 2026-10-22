@@ -212,7 +212,7 @@ The connector sends the same fields the website's own form sends (checked agains
 | Video | Wan 3.0 Prime | `wan3.0-video-prime` | 300 (480P, 2 s) to 19,600 (1080P, 30 s), from the website's table | 300 (480P, 2 s) | ✅ works |
 | Video | Wan 2.7 | `wan-2.7` | 400 (720P, 2 s) to 3,800 (1080P, 15 s) | 400 (2 s) | ✅ works |
 | Video | Wan 2.6 | `wan-2.6` | 900 / 1,700 / 2,500 (720P, 5 / 10 / 15 s), 1,300 / 2,500 / 3,800 (1080P) | 900 (twice) | ✅ works, `16:9` / `9:16` included |
-| Video | Seedance 1.0 Pro | `seedance-1.0-pro` | 2,000 (5 s) / 4,000 (10 s) | nothing yet (still queued) | ⏳ submitted fine, but waiting in GlobalGPT's own queue ("High demand right now") since 11:25; the website shows it as queued too |
+| Video | Seedance 1.0 Pro | `seedance-1.0-pro` | 2,000 (5 s) / 4,000 (10 s) | 0 (failed, not charged) | ❌ submitted fine, sat in GlobalGPT's own queue ("High demand right now") for over a day, then failed on GlobalGPT's side with "Polling timeout". The connector reported each state correctly; worth retrying when demand is lower |
 | Video | HeyGen avatar video | `heygen-video` | quoted per video (about 1,000 per minute) | 0 | ❌ "Insufficient credit. This operation requires 'api' credits." (voices list works; same on retest) |
 | Video tool | Video Upscale | `video-upscale` | 35 / 125 / 498 per second (720p / 1080p / 4K) | 71 (2 s, 720p) | ✅ works |
 | Video tool | Video Sound | `video-sound` | 1.5 per second | 3 (2 s) | ✅ works |
