@@ -4,7 +4,8 @@
 // Chat models the API doesn't offer fall back to the website's chat endpoint with your login token.
 
 const API = "https://api2.glbgpt.com/ai-api/open/v1";
-const WEB_CHAT = "https://api2.glbgpt.com/ai-api/ai/agent/chatStream";
+// Chat goes to /dify-api like the website's chat page; ChatPDF uses /ai-api (agent prefix).
+const WEB_CHAT_PREFIX = "/dify-api";
 
 // The website's chat catalogue (model id -> agent id), read from glbgpt.com on 21 Oct 2026.
 // Only used when the API refuses a model, so a model GlobalGPT later adds to the API goes there again.
@@ -42,7 +43,7 @@ const WEBSITE_ALIASES = { sonar: "perplexity", "deepresearch": "deep-research", 
 // Website workflow agents reached like chat models (through /dify-api); they can run for minutes.
 const WEBSITE_AGENTS = {
   "deep-research": { agentId: "4341", name: "Deep Research", prefix: "/dify-api" },
-  "chatpdf": { agentId: "6081", name: "ChatPDF", files: { required: true, max: 1, maxBytes: 15 * 1024 * 1024, pdfOnly: true } }, // the ChatPDF page posts to /ai-api
+  "chatpdf": { agentId: "6081", name: "ChatPDF", prefix: "/ai-api", files: { required: true, max: 1, maxBytes: 15 * 1024 * 1024, pdfOnly: true } }, // the ChatPDF page posts to /ai-api
 };
 const UA = "glbgpt-mcp-worker/2.0 (cloudflare-workers)";
 const SERVER_INFO = { name: "glbgpt-mcp", version: "2.0.0" };
@@ -170,13 +171,15 @@ async function websiteChat(env, agentId, query, opts = {}) {
   if (!env.GLBGPT_TOKEN) throw new ToolError("This chat model is only on GlobalGPT's website, which needs GLBGPT_TOKEN (your login token) on the Worker.");
   let res;
   try {
-    res = await fetch(opts.prefix ? `https://api2.glbgpt.com${opts.prefix}/ai/agent/chatStream` : WEB_CHAT, {
+    const prefix = opts.prefix || WEB_CHAT_PREFIX;
+    const aiApi = prefix === "/ai-api";
+    res = await fetch(`https://api2.glbgpt.com${prefix}/ai/agent/chatStream`, {
       method: "POST",
       headers: { Authorization: `Bearer ${env.GLBGPT_TOKEN}`, "Content-Type": "application/json", Accept: "text/event-stream", "User-Agent": UA },
       body: JSON.stringify({
         device: { deviceType: "pc" },
-        productNo: "glbgpt", // some agents refuse the call without it ("invalid product no null")
-        inputs: { ...(opts.prefix === "/dify-api" ? {} : { thinking_patch: true }), enableImages: false, deep_research: false, study: false, enableDeepThink: false, ...(opts.inputs || {}) },
+        ...(aiApi ? { productNo: "glbgpt" } : {}), // the website's chat page sends neither of these; /ai-api agents want them
+        inputs: { ...(aiApi ? { thinking_patch: true } : {}), enableImages: false, deep_research: false, study: false, enableDeepThink: false, ...(opts.inputs || {}) },
         enableSearch: false, agentId, query, conversationId: "", parentMessageId: "", files: opts.files || [], chatTaskId: crypto.randomUUID(),
       }),
     });
@@ -939,7 +942,7 @@ function dailyLimit(env) {
 }
 
 function today() {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: LIMIT_TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  return new Intl.DateTimeFormat("en-CA", { timeZone: LIMIT_TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(Date.now()));
 }
 
 class CreditLimit {
