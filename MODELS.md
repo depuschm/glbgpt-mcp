@@ -86,17 +86,17 @@ Each was tested with one short message on 21 October 2026.
 | Muse Wonder | `muse-wonder` | ✅ works |
 | Deep Research | `deep-research` | ✅ works (website research agent; sourced report; about 10 credits per 1K tokens, 60 for a short question) |
 | ChatPDF | `chatpdf` | ✅ works: `glbgpt_chat` with one PDF in `files` (or in `images` for clients with an older tool list); https URL or data: URI, up to 15 MB; under 1 credit per question. Some sites refuse the download (w3.org did), arXiv works |
-| o1 | `o1` | ❌ GlobalGPT's backend can't reach the provider |
-| o3 | `o3` | ❌ GlobalGPT's backend can't reach the provider |
-| o3-mini | `o3-mini` | ❌ GlobalGPT's backend can't reach the provider |
-| o3 Mini High | `o3-mini-high` | ❌ GlobalGPT's backend can't reach the provider |
-| o4 Mini | `o4-mini` | ❌ GlobalGPT's backend can't reach the provider |
-| GPT-5.3 | `gpt-5.3` | ❌ empty answer (retired in the API) |
-| DeepSeek V4 Flash | `deepseek-v4-flash` | ❌ GlobalGPT's backend can't reach the provider |
-| Kimi K2.5 | `kimi-k2.5` | ❌ GlobalGPT's backend can't reach the provider |
-| Perplexity | `perplexity` (or `sonar`) | ❌ GlobalGPT's backend can't reach the provider |
-| Gemini 3.5 Flash | `gemini-3.5-flash` | ❌ refused: "invalid product no" |
-| GLM-5.1 | `glm-5.1` | ❌ refused: "invalid product no" |
+| o1 | `o1` | ✅ works (fixed 24 Oct) |
+| o3 | `o3` | ✅ works (fixed 24 Oct) |
+| o3-mini | `o3-mini` | ✅ works (fixed 24 Oct) |
+| o3 Mini High | `o3-mini-high` | ✅ works (fixed 24 Oct) |
+| o4 Mini | `o4-mini` | ✅ works (fixed 24 Oct) |
+| GPT-5.3 | `gpt-5.3` | ✅ works (fixed 24 Oct; retired in the API, website only) |
+| DeepSeek V4 Flash | `deepseek-v4-flash` | ✅ works (fixed 24 Oct) |
+| Kimi K2.5 | `kimi-k2.5` | ❌ GlobalGPT's backend gets 404 from Moonshot ("Not found the model kimi-k2.5"); use `kimi-k2.6` or `kimi-k3` |
+| Perplexity | `perplexity` (or `sonar`) | ❌ GlobalGPT: "Agent 4372 has no API Key configured"; the website's own Perplexity page didn't answer either (24 Oct) |
+| Gemini 3.5 Flash | `gemini-3.5-flash` | ✅ works (fixed 24 Oct) |
+| GLM-5.1 | `glm-5.1` | ✅ works (fixed 24 Oct) |
 
 The ❌ ones are wired up and start working by themselves once GlobalGPT fixes them on their side (all retested on the evening of 21 October 2026 with the same result).
 
@@ -212,8 +212,8 @@ The connector sends the same fields the website's own form sends (checked agains
 | Video | Wan 3.0 Prime | `wan3.0-video-prime` | 300 (480P, 2 s) to 19,600 (1080P, 30 s), from the website's table | 300 (480P, 2 s) | ✅ works |
 | Video | Wan 2.7 | `wan-2.7` | 400 (720P, 2 s) to 3,800 (1080P, 15 s) | 400 (2 s) | ✅ works |
 | Video | Wan 2.6 | `wan-2.6` | 900 / 1,700 / 2,500 (720P, 5 / 10 / 15 s), 1,300 / 2,500 / 3,800 (1080P) | 900 (twice) | ✅ works, `16:9` / `9:16` included |
-| Video | Seedance 1.0 Pro | `seedance-1.0-pro` | 2,000 (5 s) / 4,000 (10 s) | 0 (failed, not charged) | ❌ submitted fine, sat in GlobalGPT's own queue ("High demand right now") for over a day, then failed on GlobalGPT's side with "Polling timeout". The connector reported each state correctly; worth retrying when demand is lower |
-| Video | HeyGen avatar video | `heygen-video` | quoted per video (about 1,000 per minute) | 0 | ❌ "Insufficient credit. This operation requires 'api' credits." (voices list works; same on retest) |
+| Video | Seedance 1.0 Pro | `seedance-1.0-pro` | 2,000 (5 s) / 4,000 (10 s) | 0 (failed twice, not charged) | ❌ failed twice on GlobalGPT's side with "Polling timeout": 21 Oct (queued for over a day) and the 22 Oct retry (reached 91%, then "pending_retry", then failed). The connector submits and reports each state correctly |
+| Video | HeyGen avatar video | `heygen-video` | quoted per video (about 1,000 per minute) | 274.9 (est. 309, a one-line script) | ✅ works (24 Oct; the earlier "requires 'api' credits" refusal is gone) |
 | Video tool | Video Upscale | `video-upscale` | 35 / 125 / 498 per second (720p / 1080p / 4K) | 71 (2 s, 720p) | ✅ works |
 | Video tool | Video Sound | `video-sound` | 1.5 per second | 3 (2 s) | ✅ works |
 | Video tool | Video Reframe | `video-reframe` | 200 per second | 400 (2 s) | ✅ works |
@@ -223,6 +223,8 @@ The connector sends the same fields the website's own form sends (checked agains
 | Speech to text | Scribe v2 / v1 | `scribe-v2` / `scribe-v1` | 12 per minute (v1 billed by the second) | 12 / 5 | ✅ both work (return a .txt transcript) |
 | Detector | AI Image Detector | `ai-image-detector` | 20 | 20 | ✅ works (image URL or data: URI; added to the media library if needed; scores come back directly) |
 | Detector | AI Video Detector | `ai-video-detector` | 20 | 0 (current discount) | ✅ works (checks one frame, cut automatically for videos on GlobalGPT; `metadata.frame_ms`) |
+
+Website chat fixed on 24 Oct: the connector posted chats to `/ai-api` with `productNo`, which some agents answered with "provider unreachable" or "invalid product no null". It now posts to `/dify-api` exactly like glbgpt.com's chat page (ChatPDF stays on `/ai-api`, like its page). That fixed o1, o3, o3-mini, o3-mini-high, o4-mini, GPT-5.3, DeepSeek V4 Flash, Gemini 3.5 Flash and GLM-5.1.
 
 Issues found in the live test and fixed the same day: AI Poster text blocks, Kling O1 lengths, Wan 2.6 sizes, website errors that said "refused the chat", 3D results labelled `image`, failed tasks shown with their (released) reservation as spent, and `glbgpt_usage` not listing website generations (now under `recent_website`).
 
